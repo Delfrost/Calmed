@@ -1,17 +1,35 @@
 {
-  "name": "healthcare-temp",
+  "name": "healthcare-saas",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "next": "16.2.6",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "@prisma/client": "^6",
+    "motion": "^12",
+    "react-hook-form": "^7",
+    "@hookform/resolvers": "^5",
+    "zod": "^3",
+    "lucide-react": "^0.510",
+    "date-fns": "^4",
+    "class-variance-authority": "^0.7",
+    "clsx": "^2",
+    "tailwind-merge": "^3",
+    "use-debounce": "^10",
+    "next-auth": "5.0.0-beta.31",
+    "recharts": "^2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -21,6 +39,8 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "prisma": "^6",
+    "tsx": "^4"
   }
 }
