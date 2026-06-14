@@ -190,34 +190,136 @@ function PatientRegistryInner() {
 
   const [searchQuery, setSearchQuery] = useState(searchParamQuery);
   const [selectedChronic, setSelectedChronic] = useState<string>('ALL');
-  const [selectedPatient, setSelectedPatient] = useState<PatientRecord | null>(null);
+  const [selectedPatient, setSelectedPatient] = useState<any | null>(null);
+  const [patientDetails, setPatientDetails] = useState<any | null>(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+
+  const [patients, setPatients] = useState<any[]>([]);
+  const [isLoadingPatients, setIsLoadingPatients] = useState(true);
+
+  // Fetch patients list dynamically
+  useEffect(() => {
+    const fetchPatients = async () => {
+      try {
+        setIsLoadingPatients(true);
+        const res = await fetch(`/api/patients?search=${searchQuery}`);
+        if (res.ok) {
+          const data = await res.json();
+          const mapped = data.patients.map((p: any) => {
+            const birthDate = p.dateOfBirth ? new Date(p.dateOfBirth) : null;
+            const age = birthDate ? new Date().getFullYear() - birthDate.getFullYear() : 45;
+            return {
+              id: p.id,
+              firstName: p.firstName,
+              lastName: p.lastName,
+              age,
+              gender: p.gender || 'Male',
+              bloodGroup: p.bloodGroup || 'Not set',
+              phone: p.phone,
+              allergies: p.allergies || [],
+              chronicConditions: p.chronicConditions || [],
+              visitCount: p._count?.appointments || 0,
+            };
+          });
+          setPatients(mapped);
+        }
+      } catch (err) {
+        console.error('Failed to fetch patients list:', err);
+      } finally {
+        setIsLoadingPatients(false);
+      }
+    };
+
+    fetchPatients();
+  }, [searchQuery]);
+
+  const handleSelectPatient = async (p: any) => {
+    setSelectedPatient(p);
+    setLoadingDetails(true);
+    setPatientDetails(null);
+    try {
+      const res = await fetch(`/api/patients/${p.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        const patientDb = data.patient;
+        
+        const timeline = (patientDb.prescriptions || []).map((rx: any) => {
+          const rxVitals = (rx.vitals || {}) as any;
+          return {
+            date: new Date(rx.createdAt).toLocaleDateString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            }),
+            diagnosis: rx.diagnosis || 'General Checkup',
+            doctor: `Dr. ${rx.doctor.user.firstName} ${rx.doctor.user.lastName}`,
+            vitals: {
+              bp: rxVitals.bloodPressure || 'N/A',
+              temp: rxVitals.temperature || 'N/A',
+              hr: rxVitals.heartRate || 'N/A',
+              weight: rxVitals.weight || 'N/A',
+            },
+            medicines: (rx.items || []).map((item: any) => ({
+              name: item.medicine.name,
+              dose: `${item.dosage} · ${item.frequency}`,
+              duration: item.duration,
+            })),
+            labOrders: (rx.labOrders || []).map((lo: any) => ({
+              testName: lo.labTest.name,
+              category: lo.labTest.category,
+            })),
+            notes: rx.notes || 'No extra notes.',
+          };
+        });
+
+        const birthDate = patientDb.dateOfBirth ? new Date(patientDb.dateOfBirth) : null;
+        const age = birthDate ? new Date().getFullYear() - birthDate.getFullYear() : 45;
+
+        setPatientDetails({
+          id: patientDb.id,
+          firstName: patientDb.firstName,
+          lastName: patientDb.lastName,
+          age,
+          gender: patientDb.gender || 'Male',
+          bloodGroup: patientDb.bloodGroup || 'Not set',
+          phone: patientDb.phone,
+          allergies: patientDb.allergies || [],
+          chronicConditions: patientDb.chronicConditions || [],
+          visitCount: patientDb.appointments?.length || 0,
+          timeline,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to load patient details:', err);
+    } finally {
+      setLoadingDetails(false);
+    }
+  };
 
   // Load patient from URL query params (for header search navigation)
   useEffect(() => {
     if (searchParamId) {
-      const match = MOCK_PATIENTS_RECORDS.find(p => p.id === searchParamId);
-      if (match) setSelectedPatient(match);
+      const match = patients.find(p => p.id === searchParamId);
+      if (match) handleSelectPatient(match);
     } else if (searchParamQuery) {
       setSearchQuery(searchParamQuery);
     }
-  }, [searchParamId, searchParamQuery]);
+  }, [searchParamId, searchParamQuery, patients]);
 
   // Compute unique chronic conditions for filters
   const allChronicConditions = useMemo(() => {
     const set = new Set<string>();
-    MOCK_PATIENTS_RECORDS.forEach(p => p.chronicConditions.forEach(c => set.add(c)));
+    patients.forEach((p: any) => p.chronicConditions.forEach((c: string) => set.add(c)));
     return Array.from(set);
-  }, []);
+  }, [patients]);
 
   // Filter patient list
   const filteredPatients = useMemo(() => {
-    return MOCK_PATIENTS_RECORDS.filter(p => {
-      const fullName = `${p.firstName} ${p.lastName}`.toLowerCase();
-      const matchesSearch = fullName.includes(searchQuery.toLowerCase()) || p.phone.includes(searchQuery);
+    return patients.filter(p => {
       const matchesChronic = selectedChronic === 'ALL' || p.chronicConditions.includes(selectedChronic);
-      return matchesSearch && matchesChronic;
+      return matchesChronic;
     });
-  }, [searchQuery, selectedChronic]);
+  }, [patients, selectedChronic]);
 
   return (
     <div className="space-y-6">
@@ -271,7 +373,7 @@ function PatientRegistryInner() {
             <motion.div
               key={p.id}
               layoutId={`card-${p.id}`}
-              onClick={() => setSelectedPatient(p)}
+              onClick={() => handleSelectPatient(p)}
               className="bg-white rounded-2xl border border-slate-200 hover:border-primary/20 shadow-soft hover:shadow-md cursor-pointer transition-all duration-200 overflow-hidden flex flex-col justify-between group"
             >
               {/* Header block */}
@@ -297,12 +399,12 @@ function PatientRegistryInner() {
 
                 {/* Badges conditions & allergies */}
                 <div className="mt-4 flex flex-wrap gap-1">
-                  {p.allergies.map(all => (
+                  {p.allergies.map((all: string) => (
                     <span key={all} className="text-[9px] font-bold uppercase tracking-wider bg-red-50 text-red-600 px-2 py-0.5 rounded-md">
                       {all}
                     </span>
                   ))}
-                  {p.chronicConditions.map(chr => (
+                  {p.chronicConditions.map((chr: string) => (
                     <span key={chr} className="text-[9px] font-bold uppercase tracking-wider bg-amber-50 text-amber-600 px-2 py-0.5 rounded-md">
                       {chr}
                     </span>
@@ -389,109 +491,122 @@ function PatientRegistryInner() {
                     <Clock className="w-4 h-4 text-primary" />
                     Intake Visit Timeline
                   </h4>
-                  <span className="text-[10px] font-bold bg-primary-50 text-primary-dark px-2.5 py-0.5 rounded-full">
-                    {selectedPatient.timeline.length} Registered entries
-                  </span>
+                  {patientDetails && (
+                    <span className="text-[10px] font-bold bg-primary-50 text-primary-dark px-2.5 py-0.5 rounded-full">
+                      {patientDetails.timeline.length} Registered entries
+                    </span>
+                  )}
                 </div>
 
-                {/* Timeline Cards */}
-                <div className="relative border-l border-slate-200/80 ml-3 pl-6 space-y-6">
-                  {selectedPatient.timeline.map((visit, index) => {
-                    return (
-                      <div key={index} className="relative group">
-                        {/* Timeline dot */}
-                        <span className="absolute -left-[30px] top-1.5 h-3.5 w-3.5 rounded-full border-2 border-white bg-primary shadow-sm flex items-center justify-center shrink-0 z-10" />
+                {loadingDetails ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-300 border-t-primary mb-4" />
+                    <p className="text-xs">Loading clinical history...</p>
+                  </div>
+                ) : patientDetails ? (
+                  <div className="relative border-l border-slate-200/80 ml-3 pl-6 space-y-6">
+                    {patientDetails.timeline.map((visit: any, index: number) => {
+                      return (
+                        <div key={index} className="relative group">
+                          {/* Timeline dot */}
+                          <span className="absolute -left-[30px] top-1.5 h-3.5 w-3.5 rounded-full border-2 border-white bg-primary shadow-sm flex items-center justify-center shrink-0 z-10" />
 
-                        {/* Visit Card details */}
-                        <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-sm hover:shadow-soft transition-all duration-200">
-                          {/* Visit header */}
-                          <div className="flex items-center justify-between border-b border-slate-50 pb-2.5 mb-3">
-                            <span className="text-xs font-bold text-slate-400 flex items-center gap-1">
-                              <Calendar className="w-3.5 h-3.5" />
-                              {visit.date}
-                            </span>
-                            <span className="text-[10px] font-bold text-slate-500 uppercase">
-                              {visit.doctor}
-                            </span>
-                          </div>
+                          {/* Visit Card details */}
+                          <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-sm hover:shadow-soft transition-all duration-200">
+                            {/* Visit header */}
+                            <div className="flex items-center justify-between border-b border-slate-50 pb-2.5 mb-3">
+                              <span className="text-xs font-bold text-slate-400 flex items-center gap-1">
+                                <Calendar className="w-3.5 h-3.5" />
+                                {visit.date}
+                              </span>
+                              <span className="text-[10px] font-bold text-slate-500 uppercase">
+                                {visit.doctor}
+                              </span>
+                            </div>
 
-                          {/* Diagnosis */}
-                          <div>
-                            <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider block">Clinical Diagnosis</span>
-                            <h5 className="font-bold text-slate-800 text-sm mt-0.5">{visit.diagnosis}</h5>
-                          </div>
+                            {/* Diagnosis */}
+                            <div>
+                              <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider block">Clinical Diagnosis</span>
+                              <h5 className="font-bold text-slate-800 text-sm mt-0.5">{visit.diagnosis}</h5>
+                            </div>
 
-                          {/* Vitals Grid */}
-                          <div className="grid grid-cols-4 gap-2 mt-4 bg-slate-50 rounded-xl p-2.5">
-                            <div className="text-center border-r border-slate-200/50">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-center gap-0.5">
-                                <Heart className="w-2.5 h-2.5 text-red-500 shrink-0" />
-                                BP
-                              </span>
-                              <p className="text-xs font-bold text-slate-700 mt-1">{visit.vitals.bp}</p>
-                            </div>
-                            <div className="text-center border-r border-slate-200/50">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-center gap-0.5">
-                                <Thermometer className="w-2.5 h-2.5 text-amber-500 shrink-0" />
-                                Temp
-                              </span>
-                              <p className="text-xs font-bold text-slate-700 mt-1">{visit.vitals.temp}</p>
-                            </div>
-                            <div className="text-center border-r border-slate-200/50">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-center gap-0.5">
-                                <Activity className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-                                HR
-                              </span>
-                              <p className="text-xs font-bold text-slate-700 mt-1">{visit.vitals.hr}</p>
-                            </div>
-                            <div className="text-center">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-center gap-0.5">
-                                <Weight className="w-2.5 h-2.5 text-emerald-500 shrink-0" />
-                                Weight
-                              </span>
-                              <p className="text-xs font-bold text-slate-700 mt-1">{visit.vitals.weight}</p>
-                            </div>
-                          </div>
-
-                          {/* Prescribed Drugs */}
-                          {visit.medicines.length > 0 && (
-                            <div className="mt-4">
-                              <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider block mb-2">Prescribed Rx</span>
-                              <div className="flex flex-col gap-1.5">
-                                {visit.medicines.map((med, mi) => (
-                                  <div key={mi} className="flex items-center justify-between bg-slate-50 border border-slate-100/50 rounded-lg px-3 py-1.5 text-xs">
-                                    <span className="font-bold text-slate-700">{med.name}</span>
-                                    <span className="text-[10px] text-slate-500">{med.dose} · {med.duration}</span>
-                                  </div>
-                                ))}
+                            {/* Vitals Grid */}
+                            <div className="grid grid-cols-4 gap-2 mt-4 bg-slate-50 rounded-xl p-2.5">
+                              <div className="text-center border-r border-slate-200/50">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-center gap-0.5">
+                                  <Heart className="w-2.5 h-2.5 text-red-500 shrink-0" />
+                                  BP
+                                </span>
+                                <p className="text-xs font-bold text-slate-700 mt-1">{visit.vitals.bp}</p>
+                              </div>
+                              <div className="text-center border-r border-slate-200/50">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-center gap-0.5">
+                                  <Thermometer className="w-2.5 h-2.5 text-amber-500 shrink-0" />
+                                  Temp
+                                </span>
+                                <p className="text-xs font-bold text-slate-700 mt-1">{visit.vitals.temp}</p>
+                              </div>
+                              <div className="text-center border-r border-slate-200/50">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-center gap-0.5">
+                                  <Activity className="w-2.5 h-2.5 text-blue-500 shrink-0" />
+                                  HR
+                                </span>
+                                <p className="text-xs font-bold text-slate-700 mt-1">{visit.vitals.hr}</p>
+                              </div>
+                              <div className="text-center">
+                                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-center gap-0.5">
+                                  <Weight className="w-2.5 h-2.5 text-emerald-500 shrink-0" />
+                                  Weight
+                                </span>
+                                <p className="text-xs font-bold text-slate-700 mt-1">{visit.vitals.weight}</p>
                               </div>
                             </div>
-                          )}
 
-                          {/* Lab Orders */}
-                          {visit.labOrders.length > 0 && (
-                            <div className="mt-4">
-                              <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider block mb-2">Requested Lab Orders</span>
-                              <div className="flex flex-wrap gap-1.5">
-                                {visit.labOrders.map((lab, li) => (
-                                  <span key={li} className="text-[10px] font-bold uppercase tracking-wider bg-purple-50 text-purple-600 px-2.5 py-1 rounded-lg">
-                                    {lab.testName}
-                                  </span>
-                                ))}
+                            {/* Prescribed Drugs */}
+                            {visit.medicines.length > 0 && (
+                              <div className="mt-4">
+                                <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider block mb-2">Prescribed Rx</span>
+                                <div className="flex flex-col gap-1.5">
+                                  {visit.medicines.map((med: any, mi: number) => (
+                                    <div key={mi} className="flex items-center justify-between bg-slate-50 border border-slate-100/50 rounded-lg px-3 py-1.5 text-xs">
+                                      <span className="font-bold text-slate-700">{med.name}</span>
+                                      <span className="text-[10px] text-slate-500">{med.dose} · {med.duration}</span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                            </div>
-                          )}
+                            )}
 
-                          {/* Advice Notes */}
-                          <div className="mt-4 pt-3 border-t border-slate-50">
-                            <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider block">Clinical Advice Notes</span>
-                            <p className="text-xs text-slate-500 mt-1 leading-relaxed">{visit.notes}</p>
+                            {/* Lab Orders */}
+                            {visit.labOrders.length > 0 && (
+                              <div className="mt-4">
+                                <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider block mb-2">Requested Lab Orders</span>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {visit.labOrders.map((lab: any, li: number) => (
+                                    <span key={li} className="text-[10px] font-bold uppercase tracking-wider bg-purple-50 text-purple-600 px-2.5 py-1 rounded-lg">
+                                      {lab.testName}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Advice Notes */}
+                            <div className="mt-4 pt-3 border-t border-slate-50">
+                              <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider block">Clinical Advice Notes</span>
+                              <p className="text-xs text-slate-500 mt-1 leading-relaxed">{visit.notes}</p>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                    {patientDetails.timeline.length === 0 && (
+                      <p className="text-xs text-slate-400 italic py-4">No prescription visits found for this patient.</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400 italic">Failed to load medical history.</p>
+                )}
               </div>
 
               {/* Drawer Footer Actions */}

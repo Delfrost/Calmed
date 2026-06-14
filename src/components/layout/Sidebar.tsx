@@ -54,7 +54,7 @@ const navSections: NavSection[] = [
       },
       {
         label: 'Prescription Pad',
-        href: '/doctor/prescription/p1',
+        href: '/doctor/prescription/patient-01',
         icon: FileText,
         roles: [UserRole.DOCTOR],
       },

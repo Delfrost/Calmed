@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { FlaskConical, Search, X, StickyNote, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -15,26 +15,18 @@ interface LabOrderSectionProps {
 
 const AVAILABLE_TESTS: LabTestOption[] = [
   // Blood Tests
-  { id: 'lt-1', name: 'CBC (Complete Blood Count)', category: 'Blood Tests', price: 350 },
-  { id: 'lt-2', name: 'Blood Sugar (Fasting)', category: 'Blood Tests', price: 150 },
-  { id: 'lt-3', name: 'HbA1c', category: 'Blood Tests', price: 600 },
-  { id: 'lt-4', name: 'Lipid Profile', category: 'Blood Tests', price: 500 },
-  { id: 'lt-5', name: 'Thyroid Panel (T3, T4, TSH)', category: 'Blood Tests', price: 800 },
-  { id: 'lt-6', name: 'Liver Function Test (LFT)', category: 'Blood Tests', price: 450 },
-  { id: 'lt-7', name: 'Kidney Function Test (KFT)', category: 'Blood Tests', price: 500 },
-  { id: 'lt-8', name: 'Vitamin D', category: 'Blood Tests', price: 900 },
-  { id: 'lt-9', name: 'Vitamin B12', category: 'Blood Tests', price: 700 },
+  { id: 'lt-01', name: 'Complete Blood Count (CBC)', category: 'Blood Tests', price: 350 },
+  { id: 'lt-02', name: 'Lipid Profile', category: 'Blood Tests', price: 600 },
+  { id: 'lt-03', name: 'HbA1c', category: 'Blood Tests', price: 500 },
+  { id: 'lt-04', name: 'Thyroid Panel (T3/T4/TSH)', category: 'Blood Tests', price: 800 },
+  { id: 'lt-05', name: 'Kidney Function Test (KFT)', category: 'Blood Tests', price: 550 },
+  { id: 'lt-06', name: 'Liver Function Test (LFT)', category: 'Blood Tests', price: 500 },
+  { id: 'lt-10', name: 'Blood Glucose Fasting', category: 'Blood Tests', price: 100 },
   // Urine Tests
-  { id: 'lt-10', name: 'Urinalysis', category: 'Urine Tests', price: 200 },
-  { id: 'lt-11', name: 'Urine Culture & Sensitivity', category: 'Urine Tests', price: 450 },
+  { id: 'lt-07', name: 'Urine Routine & Microscopy', category: 'Urine Tests', price: 200 },
   // Imaging
-  { id: 'lt-12', name: 'X-Ray Chest (PA View)', category: 'Imaging', price: 400 },
-  { id: 'lt-13', name: 'X-Ray Spine', category: 'Imaging', price: 500 },
-  { id: 'lt-14', name: 'Ultrasound Abdomen', category: 'Imaging', price: 1200 },
-  { id: 'lt-15', name: 'ECG (12-Lead)', category: 'Imaging', price: 300 },
-  // Pathology
-  { id: 'lt-16', name: 'Biopsy', category: 'Pathology', price: 2000 },
-  { id: 'lt-17', name: 'Pap Smear', category: 'Pathology', price: 800 },
+  { id: 'lt-08', name: 'Chest X-Ray', category: 'Imaging', price: 400 },
+  { id: 'lt-09', name: 'ECG (12-Lead)', category: 'Cardiology', price: 300 },
 ];
 
 const CATEGORY_COLORS: Record<string, { border: string; bg: string; text: string }> = {
@@ -42,6 +34,7 @@ const CATEGORY_COLORS: Record<string, { border: string; bg: string; text: string
   'Urine Tests': { border: 'border-l-amber-400', bg: 'bg-amber-50', text: 'text-amber-700' },
   Imaging: { border: 'border-l-blue-400', bg: 'bg-blue-50', text: 'text-blue-700' },
   Pathology: { border: 'border-l-purple-400', bg: 'bg-purple-50', text: 'text-purple-700' },
+  Cardiology: { border: 'border-l-pink-400', bg: 'bg-pink-50', text: 'text-pink-700' },
 };
 
 function getCategoryStyle(category: string) {
@@ -61,6 +54,35 @@ export default function LabOrderSection({
   onUpdateNotes,
 }: LabOrderSectionProps) {
   const [filterQuery, setFilterQuery] = useState('');
+  const [availableTests, setAvailableTests] = useState<LabTestOption[]>(AVAILABLE_TESTS);
+
+  useEffect(() => {
+    const fetchTests = async () => {
+      try {
+        const res = await fetch('/api/lab-tests');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.labTests && data.labTests.length > 0) {
+            const mapCategory = (cat: string) => {
+              if (cat === 'Blood') return 'Blood Tests';
+              if (cat === 'Urine') return 'Urine Tests';
+              return cat;
+            };
+            const mapped = data.labTests.map((t: any) => ({
+              id: t.id,
+              name: t.name,
+              category: mapCategory(t.category),
+              price: Number(t.price),
+            }));
+            setAvailableTests(mapped);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load database lab tests:', err);
+      }
+    };
+    fetchTests();
+  }, []);
 
   const selectedTestIds = useMemo(
     () => new Set(labOrders.map((order) => order.labTestId)),
@@ -70,14 +92,14 @@ export default function LabOrderSection({
   const filteredTests = useMemo(() => {
     const q = filterQuery.toLowerCase().trim();
     const tests = q
-      ? AVAILABLE_TESTS.filter(
+      ? availableTests.filter(
           (t) =>
             t.name.toLowerCase().includes(q) ||
             t.category.toLowerCase().includes(q)
         )
-      : AVAILABLE_TESTS;
+      : availableTests;
     return tests;
-  }, [filterQuery]);
+  }, [filterQuery, availableTests]);
 
   const groupedTests = useMemo(() => {
     const groups: Record<string, LabTestOption[]> = {};

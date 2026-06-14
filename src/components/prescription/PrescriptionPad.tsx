@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
+import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Pill,
@@ -95,8 +96,10 @@ function PatientSkeleton() {
 }
 
 export default function PrescriptionPad({ patientId }: PrescriptionPadProps) {
+  const { data: session } = useSession();
   const [patient, setPatient] = useState<PatientInfo | null>(null);
   const [isLoadingPatient, setIsLoadingPatient] = useState(true);
+  const [prescriptionId, setPrescriptionId] = useState<string | null>(null);
   const [vitals, setVitals] = useState<VitalsData>(INITIAL_VITALS);
   const [diagnosis, setDiagnosis] = useState('');
   const [medicines, setMedicines] = useState<PrescriptionItemData[]>([]);
@@ -106,15 +109,86 @@ export default function PrescriptionPad({ patientId }: PrescriptionPadProps) {
   const [showMobilePreview, setShowMobilePreview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Simulate loading patient data
+  // Fetch patient details and check for existing draft prescriptions
   useEffect(() => {
-    const timer = setTimeout(() => {
-      // In production, fetch from /api/patients/:patientId
-      setPatient(MOCK_PATIENT);
-      setIsLoadingPatient(false);
-    }, 800);
-    return () => clearTimeout(timer);
-  }, [patientId]);
+    const fetchPatientData = async () => {
+      try {
+        setIsLoadingPatient(true);
+        const res = await fetch(`/api/patients/${patientId}`);
+        if (!res.ok) {
+          console.error('Failed to load patient');
+          setIsLoadingPatient(false);
+          return;
+        }
+
+        const data = await res.json();
+        const birthDate = data.patient.dateOfBirth ? new Date(data.patient.dateOfBirth) : null;
+        const age = birthDate ? new Date().getFullYear() - birthDate.getFullYear() : 45;
+
+        const uiPatient: PatientInfo = {
+          id: data.patient.id,
+          firstName: data.patient.firstName,
+          lastName: data.patient.lastName,
+          age,
+          gender: data.patient.gender || 'Male',
+          bloodGroup: data.patient.bloodGroup || 'Not set',
+          phone: data.patient.phone,
+          allergies: data.patient.allergies || [],
+          chronicConditions: data.patient.chronicConditions || [],
+          visitCount: data.patient.appointments?.length || 0,
+        };
+        setPatient(uiPatient);
+
+        // Preload any existing DRAFT prescription for this patient and current doctor
+        const draftRx = data.patient.prescriptions?.find(
+          (rx: any) => rx.status === 'DRAFT' && rx.doctorId === session?.user?.doctorProfileId
+        );
+
+        if (draftRx) {
+          setPrescriptionId(draftRx.id);
+          setDiagnosis(draftRx.diagnosis || '');
+          setNotes(draftRx.notes || '');
+          if (draftRx.vitals) {
+            setVitals(draftRx.vitals as VitalsData);
+          }
+          
+          // Load items
+          const rxMedicines = draftRx.items.map((item: any) => ({
+            id: item.id,
+            medicineId: item.medicineId,
+            medicineName: item.medicine.name,
+            genericName: item.medicine.genericName || '',
+            dosage: item.dosage,
+            frequency: item.frequency,
+            duration: item.duration,
+            quantity: item.quantity,
+            instructions: item.instructions || '',
+            stockStatus: getStockStatus(item.medicine.batches?.reduce((acc: number, b: any) => acc + b.quantity, 0) ?? 0),
+            availableStock: item.medicine.batches?.reduce((acc: number, b: any) => acc + b.quantity, 0) ?? 0,
+          }));
+          setMedicines(rxMedicines);
+
+          // Load lab orders
+          const rxLabs = draftRx.labOrders.map((lo: any) => ({
+            id: lo.id,
+            labTestId: lo.labTestId,
+            labTestName: lo.labTest.name,
+            category: lo.labTest.category,
+            notes: lo.notes || '',
+          }));
+          setLabOrders(rxLabs);
+        }
+      } catch (err) {
+        console.error('Failed to load patient history:', err);
+      } finally {
+        setIsLoadingPatient(false);
+      }
+    };
+
+    if (patientId && session) {
+      fetchPatientData();
+    }
+  }, [patientId, session]);
 
   // Add medicine from search
   const handleMedicineSelect = useCallback(
@@ -185,18 +259,152 @@ export default function PrescriptionPad({ patientId }: PrescriptionPadProps) {
 
   // Form actions
   const handleSaveDraft = useCallback(async () => {
+    if (!patient || !session?.user) return;
     setIsSubmitting(true);
-    // Simulate save
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    setIsSubmitting(false);
-  }, []);
+    try {
+      const payload = {
+        patientId: patient.id,
+        doctorId: session.user.doctorProfileId,
+        diagnosis,
+        notes,
+        vitals,
+        items: medicines.map((med) => ({
+          medicineId: med.medicineId,
+          dosage: med.dosage,
+          frequency: med.frequency,
+          duration: med.duration,
+          quantity: med.quantity,
+          instructions: med.instructions,
+          stockAtPrescription: med.availableStock,
+        })),
+        labOrders: labOrders.map((lo) => ({
+          labTestId: lo.labTestId,
+          notes: lo.notes,
+        })),
+      };
+
+      let res;
+      if (prescriptionId) {
+        res = await fetch(`/api/prescriptions/${prescriptionId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch('/api/prescriptions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      if (res.ok) {
+        const data = await res.json();
+        setPrescriptionId(data.prescription.id);
+        alert('Draft prescription saved successfully!');
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to save draft');
+      }
+    } catch (err) {
+      console.error('Error saving draft:', err);
+      alert('An unexpected error occurred while saving draft.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [patient, session, diagnosis, notes, vitals, medicines, labOrders, prescriptionId]);
 
   const handleFinalize = useCallback(async () => {
+    if (!patient || !session?.user) return;
     setIsSubmitting(true);
-    // Simulate finalize
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    setIsSubmitting(false);
-  }, []);
+    try {
+      const payload = {
+        patientId: patient.id,
+        doctorId: session.user.doctorProfileId,
+        diagnosis,
+        notes,
+        vitals,
+        items: medicines.map((med) => ({
+          medicineId: med.medicineId,
+          dosage: med.dosage,
+          frequency: med.frequency,
+          duration: med.duration,
+          quantity: med.quantity,
+          instructions: med.instructions,
+          stockAtPrescription: med.availableStock,
+        })),
+        labOrders: labOrders.map((lo) => ({
+          labTestId: lo.labTestId,
+          notes: lo.notes,
+        })),
+      };
+
+      let rxId = prescriptionId;
+      let res;
+      if (rxId) {
+        res = await fetch(`/api/prescriptions/${rxId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch('/api/prescriptions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || 'Failed to update draft before finalizing');
+        setIsSubmitting(false);
+        return;
+      }
+
+      const data = await res.json();
+      rxId = data.prescription.id;
+
+      // Finalize the prescription
+      const finalizeRes = await fetch(`/api/prescriptions/${rxId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'SENT_TO_PHARMACY' }),
+      });
+
+      if (finalizeRes.ok) {
+        alert('Prescription finalized and sent to pharmacy!');
+        
+        // Auto-complete the patient\'s active queue token
+        try {
+          const queueRes = await fetch(`/api/queue?doctorId=${session.user.doctorProfileId}`);
+          if (queueRes.ok) {
+            const queueData = await queueRes.json();
+            const token = queueData.tokens.find((t: any) => t.patientId === patient.id && t.status !== 'COMPLETED');
+            if (token) {
+              await fetch(`/api/queue/${token.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'COMPLETED' }),
+              });
+            }
+          }
+        } catch (queueErr) {
+          console.error('Failed to advance queue status:', queueErr);
+        }
+
+        window.location.href = '/doctor';
+      } else {
+        const finalizeData = await finalizeRes.json();
+        alert(finalizeData.error || 'Failed to finalize prescription');
+      }
+    } catch (err) {
+      console.error('Error finalizing prescription:', err);
+      alert('An unexpected error occurred while finalizing.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [patient, session, diagnosis, notes, vitals, medicines, labOrders, prescriptionId]);
 
   const patientFullName = patient
     ? `${patient.firstName} ${patient.lastName}`

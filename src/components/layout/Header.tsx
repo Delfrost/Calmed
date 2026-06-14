@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
+import { useSession, signOut } from 'next-auth/react';
 import {
   Search,
   Bell,
@@ -91,6 +92,7 @@ const DEFAULT_NOTIFICATIONS: NotificationItem[] = [
 export default function Header({ title, breadcrumbs = [] }: HeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const { data: session } = useSession();
 
   const [scrolled, setScrolled] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
@@ -102,6 +104,11 @@ export default function Header({ title, breadcrumbs = [] }: HeaderProps) {
 
   // Dynamic notifications state
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+
+  // Asynchronous Search States
+  const [patientsResult, setPatientsResult] = useState<any[]>([]);
+  const [drugsResult, setDrugsResult] = useState<any[]>([]);
+  const [isLoadingSearch, setIsLoadingSearch] = useState(false);
 
   const searchRef = useRef<HTMLDivElement>(null);
   const notificationsRef = useRef<HTMLDivElement>(null);
@@ -124,6 +131,20 @@ export default function Header({ title, breadcrumbs = [] }: HeaderProps) {
     activeRole = 'ADMIN';
     activeStaffName = 'Rajesh Kumar';
     activeStaffSub = 'Clinic Director';
+  }
+
+  if (session?.user) {
+    activeRole = session.user.role;
+    activeStaffName = session.user.name || `${session.user.firstName} ${session.user.lastName}`;
+    if (activeRole === 'DOCTOR') {
+      activeStaffSub = 'Consulting Doctor';
+    } else if (activeRole === 'RECEPTIONIST') {
+      activeStaffSub = 'Front Desk Executive';
+    } else if (activeRole === 'PHARMACIST') {
+      activeStaffSub = 'Head Pharmacist';
+    } else if (activeRole === 'ADMIN') {
+      activeStaffSub = 'Clinic Director';
+    }
   }
 
   // Load and sync notifications from localStorage
@@ -189,17 +210,42 @@ export default function Header({ title, breadcrumbs = [] }: HeaderProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Debounced search logic for patients & medicines
+  useEffect(() => {
+    if (searchQuery.trim().length < 2) {
+      setPatientsResult([]);
+      setDrugsResult([]);
+      return;
+    }
+
+    const delayDebounce = setTimeout(async () => {
+      try {
+        setIsLoadingSearch(true);
+        const [patientsRes, drugsRes] = await Promise.all([
+          fetch(`/api/patients?search=${encodeURIComponent(searchQuery)}`),
+          fetch(`/api/inventory/search?q=${encodeURIComponent(searchQuery)}`)
+        ]);
+
+        if (patientsRes.ok) {
+          const data = await patientsRes.json();
+          setPatientsResult((data.patients || []).slice(0, 5));
+        }
+        if (drugsRes.ok) {
+          const data = await drugsRes.json();
+          setDrugsResult((data.results || []).slice(0, 5));
+        }
+      } catch (err) {
+        console.error('Global search error:', err);
+      } finally {
+        setIsLoadingSearch(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(delayDebounce);
+  }, [searchQuery]);
+
   // Compute unread count
   const unreadCount = notifications.filter((n) => !n.read).length;
-
-  // Search filter matches
-  const filteredPatients = searchQuery.length >= 2
-    ? MOCK_PATIENTS.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.phone.includes(searchQuery))
-    : [];
-
-  const filteredDrugs = searchQuery.length >= 2
-    ? MOCK_DRUGS.filter(d => d.name.toLowerCase().includes(searchQuery.toLowerCase()) || d.category.toLowerCase().includes(searchQuery.toLowerCase()))
-    : [];
 
   const showSearchResults = searchFocused && searchQuery.length >= 2;
 
@@ -221,10 +267,10 @@ export default function Header({ title, breadcrumbs = [] }: HeaderProps) {
   };
 
   // Sign out functionality
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     // Clear session details if any
     localStorage.removeItem('medflow-user-role');
-    router.push('/login');
+    await signOut({ callbackUrl: '/login' });
   };
 
   return (
@@ -313,84 +359,105 @@ export default function Header({ title, breadcrumbs = [] }: HeaderProps) {
                 transition={{ duration: 0.15 }}
                 className="absolute right-0 mt-2 w-80 max-h-96 overflow-y-auto rounded-2xl border border-slate-200/80 bg-white/95 backdrop-blur-xl p-4 shadow-xl z-50 flex flex-col gap-4"
               >
-                {/* Patients Results */}
-                <div>
-                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-1.5 mb-2 flex items-center gap-1">
-                    <ClipboardList className="w-3.5 h-3.5 text-blue-500" />
-                    Patients
-                  </h4>
-                  {filteredPatients.length > 0 ? (
-                    <div className="flex flex-col gap-1.5">
-                      {filteredPatients.map(p => (
-                        <div
-                          key={p.id}
-                          onClick={() => {
-                            setSearchFocused(false);
-                            setSearchQuery('');
-                            router.push(`/doctor/patients?search=${p.name}`);
-                          }}
-                          className="p-2 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer text-left group"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-slate-700 group-hover:text-primary transition-colors">
-                              {p.name}
-                            </span>
-                            <span className="text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded uppercase">
-                              {p.gender.charAt(0)}y · {p.age}
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                            {p.phone} · {p.info}
-                          </p>
+                {isLoadingSearch ? (
+                  <div className="py-6 text-center text-slate-400">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-primary mx-auto mb-2" />
+                    <p className="text-[10px] uppercase font-bold tracking-wider">Searching database...</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Patients Results */}
+                    <div>
+                      <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-1.5 mb-2 flex items-center gap-1">
+                        <ClipboardList className="w-3.5 h-3.5 text-blue-500" />
+                        Patients
+                      </h4>
+                      {patientsResult.length > 0 ? (
+                        <div className="flex flex-col gap-1.5">
+                          {patientsResult.map((p) => {
+                            const name = `${p.firstName} ${p.lastName}`;
+                            const age = p.dateOfBirth
+                              ? new Date().getFullYear() - new Date(p.dateOfBirth).getFullYear()
+                              : 'N/A';
+                            const info = [...(p.allergies || []), ...(p.chronicConditions || [])].join(', ') || 'No registered risk warnings';
+                            return (
+                              <div
+                                key={p.id}
+                                onClick={() => {
+                                  setSearchFocused(false);
+                                  setSearchQuery('');
+                                  router.push(`/doctor/patients?id=${p.id}`);
+                                }}
+                                className="p-2 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer text-left group"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-bold text-slate-700 group-hover:text-primary transition-colors">
+                                    {name}
+                                  </span>
+                                  <span className="text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded uppercase">
+                                    {p.gender ? p.gender.charAt(0) : 'M'} · {age} yrs
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                                  {p.phone} · {info}
+                                </p>
+                              </div>
+                            );
+                          })}
                         </div>
-                      ))}
+                      ) : (
+                        <p className="text-[10px] text-slate-400 italic py-1">No matching patients found.</p>
+                      )}
                     </div>
-                  ) : (
-                    <p className="text-[10px] text-slate-400 italic py-1">No matching patients found.</p>
-                  )}
-                </div>
 
-                {/* Drugs Results */}
-                <div>
-                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-1.5 mb-2 flex items-center gap-1">
-                    <Pill className="w-3.5 h-3.5 text-teal-500" />
-                    Drugs (Inventory)
-                  </h4>
-                  {filteredDrugs.length > 0 ? (
-                    <div className="flex flex-col gap-1.5">
-                      {filteredDrugs.map(d => (
-                        <div
-                          key={d.id}
-                          onClick={() => {
-                            setSearchFocused(false);
-                            setSearchQuery('');
-                            router.push(`/pharmacist?q=${d.name}`);
-                          }}
-                          className="p-2 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer text-left"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-slate-700">
-                              {d.name}
-                            </span>
-                            <span className={cn(
-                              'text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider',
-                              d.status === 'in_stock' && 'bg-emerald-50 text-emerald-600',
-                              d.status === 'low_stock' && 'bg-amber-50 text-amber-600',
-                              d.status === 'out_of_stock' && 'bg-red-50 text-red-600'
-                            )}>
-                              {d.stock}
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                            Category: {d.category}
-                          </p>
+                    {/* Drugs Results */}
+                    <div>
+                      <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-1.5 mb-2 flex items-center gap-1">
+                        <Pill className="w-3.5 h-3.5 text-teal-500" />
+                        Drugs (Inventory)
+                      </h4>
+                      {drugsResult.length > 0 ? (
+                        <div className="flex flex-col gap-1.5">
+                          {drugsResult.map((d) => {
+                            const totalStock = d.totalStock || 0;
+                            const status = totalStock >= 20 ? 'in_stock' : totalStock > 0 ? 'low_stock' : 'out_of_stock';
+                            const stockText = `${totalStock} units`;
+                            return (
+                              <div
+                                key={d.id}
+                                onClick={() => {
+                                  setSearchFocused(false);
+                                  setSearchQuery('');
+                                  router.push(`/pharmacist?q=${d.name}`);
+                                }}
+                                className="p-2 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer text-left"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-bold text-slate-700">
+                                    {d.name}
+                                  </span>
+                                  <span className={cn(
+                                    'text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider',
+                                    status === 'in_stock' && 'bg-emerald-50 text-emerald-600',
+                                    status === 'low_stock' && 'bg-amber-50 text-amber-600',
+                                    status === 'out_of_stock' && 'bg-red-50 text-red-600'
+                                  )}>
+                                    {stockText}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                                  Category: {d.category}
+                                </p>
+                              </div>
+                            );
+                          })}
                         </div>
-                      ))}
+                      ) : (
+                        <p className="text-[10px] text-slate-400 italic py-1">No matching medicines found.</p>
+                      )}
                     </div>
-                  ) : (
-                    <p className="text-[10px] text-slate-400 italic py-1">No matching medicines found.</p>
-                  )}
-                </div>
+                  </>
+                )}
               </motion.div>
             )}
           </AnimatePresence>

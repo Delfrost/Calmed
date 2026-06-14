@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Inter, DM_Sans } from 'next/font/google';
+import { SessionProvider } from 'next-auth/react';
 import './globals.css';
 
 // ============================================================================
@@ -10,7 +11,7 @@ const inter = Inter({
   subsets: ['latin'],
   display: 'swap',
   variable: '--font-inter',
-});
+  });
 
 const dmSans = DM_Sans({
   subsets: ['latin'],
@@ -52,7 +53,9 @@ export default function RootLayout({
       className={`${inter.variable} ${dmSans.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-bg text-slate-800 font-sans">
-        {children}
+        <SessionProvider>
+          {children}
+        </SessionProvider>
       </body>
     </html>
   );

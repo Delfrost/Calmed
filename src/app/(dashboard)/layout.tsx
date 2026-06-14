@@ -1,5 +1,6 @@
 'use client';
 
+import { useSession } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
@@ -20,6 +21,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const { data: session } = useSession();
 
   // Resolve role dynamically based on active path
   let role = UserRole.DOCTOR;
@@ -71,6 +73,8 @@ export default function DashboardLayout({
     [UserRole.ADMIN]: 'Rajesh Kumar (Clinic Director)',
   };
 
+  const activeName = session?.user?.name || userNames[role];
+
   return (
     <div className="min-h-dvh bg-bg">
       {/* Toast Notifier Global alerts overlay */}
@@ -79,7 +83,7 @@ export default function DashboardLayout({
       {/* Sidebar — desktop only */}
       <Sidebar 
         role={role} 
-        userName={userNames[role]}
+        userName={activeName}
         clinicName="MedFlow Clinic"
       />
 

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { signIn, getSession } from 'next-auth/react';
 import { motion } from 'motion/react';
 import {
   Stethoscope,
@@ -21,21 +22,73 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loadingRole, setLoadingRole] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSandboxLogin = (role: string, targetPath: string) => {
+  const handleSandboxLogin = async (role: string, targetPath: string) => {
     setLoadingRole(role);
-    setTimeout(() => {
-      router.push(targetPath);
-    }, 800);
+    setError(null);
+    let demoEmail = '';
+    let demoPassword = '';
+    
+    if (role === 'Doctor') {
+      demoEmail = 'doctor@medflow.in';
+      demoPassword = 'doctor123';
+    } else if (role === 'Receptionist') {
+      demoEmail = 'receptionist@medflow.in';
+      demoPassword = 'reception123';
+    } else if (role === 'Pharmacist') {
+      demoEmail = 'pharmacist@medflow.in';
+      demoPassword = 'pharma123';
+    } else if (role === 'Administrator') {
+      demoEmail = 'admin@medflow.in';
+      demoPassword = 'admin123';
+    }
+
+    try {
+      const res = await signIn('credentials', {
+        email: demoEmail,
+        password: demoPassword,
+        redirect: false,
+      });
+
+      if (res?.error) {
+        setError('Failed to sign in. Please verify the database is running.');
+        setLoadingRole(null);
+      } else {
+        router.push(targetPath);
+      }
+    } catch (err) {
+      console.error(err);
+      setError('An unexpected error occurred during sandbox sign-in.');
+      setLoadingRole(null);
+    }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoadingRole('custom');
-    setTimeout(() => {
-      // Default sandbox route
-      router.push('/doctor');
-    }, 1000);
+    setError(null);
+
+    try {
+      const res = await signIn('credentials', {
+        email,
+        password,
+        redirect: false,
+      });
+
+      if (res?.error) {
+        setError('Invalid email or password.');
+        setLoadingRole(null);
+      } else {
+        const session = await getSession();
+        const role = session?.user?.role?.toLowerCase() || 'doctor';
+        router.push(`/${role}`);
+      }
+    } catch (err) {
+      console.error(err);
+      setError('An unexpected error occurred during sign-in.');
+      setLoadingRole(null);
+    }
   };
 
   const sandboxUsers = [
@@ -118,6 +171,11 @@ export default function Login() {
                 Enter your credentials registered by the clinic admin.
               </p>
             </div>
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-600 rounded-xl p-3 text-xs font-semibold">
+                {error}
+              </div>
+            )}
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>

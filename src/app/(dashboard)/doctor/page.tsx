@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
+import { useSession } from 'next-auth/react';
 import {
   Users,
   Clock,
@@ -12,6 +13,7 @@ import {
   Activity,
   Calendar,
   Stethoscope,
+  X,
 } from 'lucide-react';
 
 // ============================================================================
@@ -70,47 +72,82 @@ const cardVariants = {
 export default function DoctorDashboard() {
   const [queue, setQueue] = useState<DoctorQueueItem[]>([]);
   const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
+  const [activeToast, setActiveToast] = useState<{
+    id: string;
+    title: string;
+    description: string;
+    tokenNumber?: number;
+    type?: string;
+    timestamp?: string;
+  } | null>(null);
+  const { data: session } = useSession();
 
-  // Load and subscribe to real-time receptionist check-ins via storage events
+  const fetchQueue = async () => {
+    try {
+      const doctorProfileId = session?.user?.doctorProfileId;
+      const url = doctorProfileId ? `/api/queue?doctorId=${doctorProfileId}` : '/api/queue';
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const mapped = data.tokens.map((token: any) => ({
+          id: token.id,
+          tokenNumber: token.tokenNumber,
+          patientId: token.patient.id,
+          patientName: `${token.patient.firstName} ${token.patient.lastName}`,
+          age: token.patient.dateOfBirth
+            ? new Date().getFullYear() - new Date(token.patient.dateOfBirth).getFullYear()
+            : 0,
+          gender: token.patient.gender?.startsWith('F') ? 'F' : 'M',
+          type: token.appointment.type === 'FOLLOW_UP' ? 'Follow-up' : 'Consultation',
+          status: token.status,
+          timeSlot: token.appointment.timeSlot,
+        }));
+        setQueue(mapped);
+      }
+    } catch (err) {
+      console.error('Failed to load queue:', err);
+    }
+  };
+
   useEffect(() => {
-    const loadQueue = () => {
-      const stored = localStorage.getItem('medflow-queue');
-      if (stored) {
-        try {
-          const rawQueue = JSON.parse(stored);
-          // Filter only patients checked in under Lead Cardiologist: Dr. Anand Sharma
-          const mapped = rawQueue
-            .filter((item: any) => item.assignedDoctor === 'Dr. Anand Sharma')
-            .map((item: any) => ({
-              id: item.id,
-              tokenNumber: item.tokenNumber,
-              patientId: item.patientId || `p-${item.id.replace('q-', '')}`,
-              patientName: item.patientName,
-              age: item.age,
-              gender: item.gender.startsWith('M') ? 'M' : 'F',
-              type: item.tokenNumber % 3 === 0 ? 'Follow-up' : 'Consultation',
-              status: item.status === 'SKIPPED' ? 'WAITING' : item.status,
-              timeSlot: item.checkedInTime || item.timeSlot.split(' ')[0],
-            }));
-          setQueue(mapped);
-        } catch {
-          // ignore parsing error
-        }
-      }
-    };
+    if (session) {
+      fetchQueue();
+      const interval = setInterval(fetchQueue, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [session]);
 
-    loadQueue();
-
-    // Storage listener
+  // Storage listener for instant cross-tab sync when receptionist checks in
+  useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'medflow-queue') {
-        loadQueue();
+      if (e.key === 'medflow-toast') {
+        if (e.newValue) {
+          try {
+            const data = JSON.parse(e.newValue);
+            // Display alert to doctor if check-in matches this doctor's profile ID or name
+            const doctorName = session?.user?.name;
+            const matchesDoctor = data.doctorId === session?.user?.doctorProfileId || 
+              (doctorName && data.description.includes(doctorName));
+            
+            if (matchesDoctor) {
+              setActiveToast(data);
+              // Auto-dismiss after 6 seconds
+              setTimeout(() => {
+                setActiveToast(current => current?.id === data.id ? null : current);
+              }, 6000);
+            }
+          } catch (err) {
+            console.error(err);
+          }
+        }
+        fetchQueue();
+      } else if (e.key === 'medflow-queue') {
+        fetchQueue();
       }
     };
-
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, []);
+  }, [session]);
 
   const completedCount = queue.filter((q) => q.status === 'COMPLETED').length;
   const inProgressCount = queue.filter((q) => q.status === 'IN_PROGRESS').length;
@@ -289,6 +326,46 @@ export default function DoctorDashboard() {
           )}
         </motion.div>
       </div>
+
+      {/* Real-time Receptionist Check-in Toast Alert */}
+      <AnimatePresence>
+        {activeToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            className="fixed bottom-6 right-6 z-50 max-w-sm w-full bg-white/95 backdrop-blur-md rounded-2xl border-l-4 border-l-blue-600 border border-slate-200/80 shadow-2xl p-4 flex gap-3.5 items-start"
+          >
+            <div className="h-9 w-9 rounded-xl bg-blue-50 flex items-center justify-center shrink-0 mt-0.5">
+              <Stethoscope className="h-5 w-5 text-blue-600 animate-pulse" />
+            </div>
+            
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-black text-slate-800 tracking-wide uppercase flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-blue-600 animate-ping" />
+                  {activeToast.title}
+                </p>
+                <button 
+                  onClick={() => setActiveToast(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors shrink-0"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <p className="text-xs text-slate-600 mt-1 font-medium leading-relaxed">
+                {activeToast.description}
+              </p>
+              {activeToast.tokenNumber && (
+                <div className="mt-2.5 inline-flex items-center gap-1 bg-blue-50 text-blue-700 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider">
+                  Token #{activeToast.tokenNumber}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
+

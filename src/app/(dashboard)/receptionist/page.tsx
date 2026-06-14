@@ -91,7 +91,7 @@ const DOCTOR_OPTIONS = [
 ];
 
 export default function ReceptionistQueue() {
-  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [queue, setQueue] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
 
@@ -101,125 +101,250 @@ export default function ReceptionistQueue() {
   const [phone, setPhone] = useState('');
   const [age, setAge] = useState('');
   const [gender, setGender] = useState('Male');
-  const [assignedDoctorId, setAssignedDoctorId] = useState('dr-1');
+  const [assignedDoctorId, setAssignedDoctorId] = useState('');
   const [timeSlot, setTimeSlot] = useState('10:00 - 10:15');
 
   // Modal printed slip states
-  const [printedSlipItem, setPrintedSlipItem] = useState<QueueItem | null>(null);
+  const [printedSlipItem, setPrintedSlipItem] = useState<any | null>(null);
   const [whatsappSent, setWhatsappSent] = useState(false);
 
-  // Sync queue from localStorage on mount
+  const [doctorsList, setDoctorsList] = useState<any[]>([]);
+  const [loadingDoctors, setLoadingDoctors] = useState(true);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [isLoadingQueue, setIsLoadingQueue] = useState(true);
+
+  // Fetch doctors list on mount
   useEffect(() => {
-    const stored = localStorage.getItem('medflow-queue');
-    if (stored) {
+    const fetchDoctors = async () => {
       try {
-        setQueue(JSON.parse(stored));
-      } catch {
-        localStorage.setItem('medflow-queue', JSON.stringify(INITIAL_QUEUE));
-        setQueue(INITIAL_QUEUE);
+        const res = await fetch('/api/doctors');
+        if (res.ok) {
+          const data = await res.json();
+          setDoctorsList(data.doctors);
+          if (data.doctors.length > 0) {
+            setAssignedDoctorId(data.doctors[0].doctorProfile?.id || '');
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load doctors:', err);
+      } finally {
+        setLoadingDoctors(false);
       }
-    } else {
-      localStorage.setItem('medflow-queue', JSON.stringify(INITIAL_QUEUE));
-      setQueue(INITIAL_QUEUE);
-    }
+    };
+    fetchDoctors();
   }, []);
 
-  const activeDoctor = useMemo(() => {
-    return DOCTOR_OPTIONS.find((d) => d.id === assignedDoctorId) || DOCTOR_OPTIONS[0];
-  }, [assignedDoctorId]);
+  const fetchQueue = async () => {
+    try {
+      const res = await fetch('/api/queue');
+      if (res.ok) {
+        const data = await res.json();
+        // Map queue tokens from database to matching UI format
+        const mapped = data.tokens.map((token: any) => ({
+          id: token.id,
+          tokenNumber: token.tokenNumber,
+          patientName: `${token.patient.firstName} ${token.patient.lastName}`,
+          phone: token.patient.phone,
+          age: token.patient.dateOfBirth
+            ? new Date().getFullYear() - new Date(token.patient.dateOfBirth).getFullYear()
+            : 0,
+          gender: token.patient.gender || 'Male',
+          assignedDoctor: `Dr. ${token.doctor.user.firstName} ${token.doctor.user.lastName}`,
+          timeSlot: token.appointment.timeSlot,
+          status: token.status,
+          checkedInTime: new Date(token.createdAt).toLocaleTimeString('en-IN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          }),
+        }));
+        setQueue(mapped);
+      }
+    } catch (err) {
+      console.error('Failed to fetch queue:', err);
+    } finally {
+      setIsLoadingQueue(false);
+    }
+  };
 
-  const handleRegister = (e: React.FormEvent) => {
+  useEffect(() => {
+    fetchQueue();
+    // Poll queue every 10 seconds for real-time sync
+    const interval = setInterval(fetchQueue, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const activeDoctorName = useMemo(() => {
+    const doc = doctorsList.find((d) => d.doctorProfile?.id === assignedDoctorId);
+    return doc ? `Dr. ${doc.firstName} ${doc.lastName}` : 'Dr. Anand Sharma';
+  }, [doctorsList, assignedDoctorId]);
+
+  const activeDoctorFee = useMemo(() => {
+    return 500;
+  }, []);
+
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!firstName || !lastName || !phone || !age) return;
 
-    const nextTokenNumber = queue.length > 0 ? Math.max(...queue.map((q) => q.tokenNumber)) + 1 : 1;
-    const now = new Date();
-    const checkedInTime = now.toLocaleTimeString('en-IN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    });
+    try {
+      setIsRegistering(true);
+      // Calculate a dummy dateOfBirth from age
+      const birthYear = new Date().getFullYear() - parseInt(age);
+      const dateOfBirth = `${birthYear}-01-01`;
 
-    const newItem: QueueItem = {
-      id: `q-${Date.now()}`,
-      tokenNumber: nextTokenNumber,
-      patientName: `${firstName} ${lastName}`,
-      phone,
-      age: parseInt(age),
-      gender,
-      assignedDoctor: activeDoctor.name,
-      timeSlot,
-      status: 'WAITING',
-      checkedInTime,
-    };
+      let patientId = '';
+      let patientData = null;
 
-    const updatedQueue = [...queue, newItem];
-    setQueue(updatedQueue);
-    localStorage.setItem('medflow-queue', JSON.stringify(updatedQueue));
-    window.dispatchEvent(new StorageEvent('storage', { key: 'medflow-queue', newValue: JSON.stringify(updatedQueue) }));
+      // 1. Create Patient or get existing
+      const res = await fetch('/api/patients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstName,
+          lastName,
+          phone,
+          dateOfBirth,
+          gender,
+        }),
+      });
 
-    // Send Toast Sync Notification
-    const toastData = {
-      id: `toast-${Date.now()}`,
-      title: 'New Patient Checked In!',
-      description: `${firstName} ${lastName} has checked in for ${activeDoctor.name}.`,
-      tokenNumber: nextTokenNumber,
-      type: 'CHECK_IN',
-      timestamp: checkedInTime,
-    };
-    localStorage.setItem('medflow-toast', JSON.stringify(toastData));
-    window.dispatchEvent(new StorageEvent('storage', { key: 'medflow-toast', newValue: JSON.stringify(toastData) }));
-
-    // Append to notifications
-    const storedNotifs = localStorage.getItem('medflow-notifications');
-    let notifsList = [];
-    if (storedNotifs) {
-      try {
-        notifsList = JSON.parse(storedNotifs);
-      } catch {
-        notifsList = [];
+      const data = await res.json();
+      if (res.status === 201) {
+        patientId = data.patient.id;
+        patientData = data.patient;
+      } else if (res.status === 409) {
+        patientId = data.existingPatient.id;
+        patientData = data.existingPatient;
+      } else {
+        alert(data.error || 'Failed to register patient');
+        setIsRegistering(false);
+        return;
       }
+
+      // 2. Create Appointment and Queue Token (the endpoint POST /api/appointments creates both!)
+      const apptRes = await fetch('/api/appointments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: new Date().toISOString().split('T')[0], // today
+          timeSlot,
+          patientId,
+          doctorId: assignedDoctorId,
+          type: 'CONSULTATION',
+        }),
+      });
+
+      const apptData = await apptRes.json();
+      if (!apptRes.ok) {
+        alert(apptData.error || 'Failed to create appointment');
+        setIsRegistering(false);
+        return;
+      }
+
+      // 3. Refresh Queue
+      await fetchQueue();
+
+      const checkedInTime = new Date(apptData.queueToken.createdAt).toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+
+      // Set printed slip item
+      const newQueueTokenItem = {
+        id: apptData.queueToken.id,
+        tokenNumber: apptData.queueToken.tokenNumber,
+        patientName: `${patientData.firstName} ${patientData.lastName}`,
+        phone: patientData.phone,
+        age: parseInt(age),
+        gender,
+        assignedDoctor: activeDoctorName,
+        timeSlot,
+        status: apptData.queueToken.status,
+        checkedInTime,
+      };
+
+      setPrintedSlipItem(newQueueTokenItem);
+      setWhatsappSent(false);
+
+      // Trigger Toast & Notifications in LocalStorage for Real-time Doctor Alert!
+      const toastData = {
+        id: `toast-${Date.now()}`,
+        title: 'New Patient Checked In!',
+        description: `${firstName} ${lastName} has checked in for ${activeDoctorName}.`,
+        tokenNumber: apptData.queueToken.tokenNumber,
+        doctorId: assignedDoctorId,
+        type: 'CHECK_IN',
+        timestamp: checkedInTime,
+      };
+      localStorage.setItem('medflow-toast', JSON.stringify(toastData));
+      window.dispatchEvent(new StorageEvent('storage', { key: 'medflow-toast', newValue: JSON.stringify(toastData) }));
+
+      const storedNotifs = localStorage.getItem('medflow-notifications');
+      let notifsList = [];
+      if (storedNotifs) {
+        try { notifsList = JSON.parse(storedNotifs); } catch { notifsList = []; }
+      }
+      const newNotif = {
+        id: `n-${Date.now()}`,
+        title: 'New Patient Registered',
+        description: `Token #${apptData.queueToken.tokenNumber} issued for ${firstName} ${lastName} under ${activeDoctorName}.`,
+        time: 'Just now',
+        read: false,
+        category: 'CHECK_IN' as const
+      };
+      localStorage.setItem('medflow-notifications', JSON.stringify([newNotif, ...notifsList]));
+      window.dispatchEvent(new Event('medflow-notif-update'));
+
+      // Clear Form
+      setFirstName('');
+      setLastName('');
+      setPhone('');
+      setAge('');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to register check-in.');
+    } finally {
+      setIsRegistering(false);
     }
-    const newNotif = {
-      id: `n-${Date.now()}`,
-      title: 'New Patient Registered',
-      description: `Token #${nextTokenNumber} issued for ${firstName} ${lastName} under ${activeDoctor.name}.`,
-      time: 'Just now',
-      read: false,
-      category: 'CHECK_IN' as const
-    };
-    const updatedNotifs = [newNotif, ...notifsList];
-    localStorage.setItem('medflow-notifications', JSON.stringify(updatedNotifs));
-    window.dispatchEvent(new Event('medflow-notif-update'));
-
-    setPrintedSlipItem(newItem);
-    setWhatsappSent(false);
-
-    // Clear form
-    setFirstName('');
-    setLastName('');
-    setPhone('');
-    setAge('');
   };
 
-  const handleUpdateStatus = (id: string, newStatus: QueueItem['status']) => {
-    const updatedQueue = queue.map((item) => (item.id === id ? { ...item, status: newStatus } : item));
-    setQueue(updatedQueue);
-    localStorage.setItem('medflow-queue', JSON.stringify(updatedQueue));
-    window.dispatchEvent(new StorageEvent('storage', { key: 'medflow-queue', newValue: JSON.stringify(updatedQueue) }));
+  const handleUpdateStatus = async (id: string, newStatus: string) => {
+    try {
+      const res = await fetch(`/api/queue/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (res.ok) {
+        await fetchQueue();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to update queue token');
+      }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  const handleRemove = (id: string) => {
-    const updatedQueue = queue.filter((item) => item.id !== id);
-    setQueue(updatedQueue);
-    localStorage.setItem('medflow-queue', JSON.stringify(updatedQueue));
-    window.dispatchEvent(new StorageEvent('storage', { key: 'medflow-queue', newValue: JSON.stringify(updatedQueue) }));
+  const handleRemove = async (id: string) => {
+    try {
+      const res = await fetch(`/api/queue/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'CANCELLED' }),
+      });
+      if (res.ok) {
+        await fetchQueue();
+      }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  const handleResetData = () => {
-    setQueue(INITIAL_QUEUE);
-    localStorage.setItem('medflow-queue', JSON.stringify(INITIAL_QUEUE));
-    window.dispatchEvent(new StorageEvent('storage', { key: 'medflow-queue', newValue: JSON.stringify(INITIAL_QUEUE) }));
+  const handleResetData = async () => {
+    await fetchQueue();
   };
 
   const filteredQueue = useMemo(() => {
@@ -519,14 +644,14 @@ export default function ReceptionistQueue() {
                   onChange={(e) => setAssignedDoctorId(e.target.value)}
                   className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs outline-none bg-white focus:border-blue-400"
                 >
-                  {DOCTOR_OPTIONS.map((dr) => (
-                    <option key={dr.id} value={dr.id}>
-                      {dr.name} ({dr.specialty})
+                  {doctorsList.map((dr) => (
+                    <option key={dr.doctorProfile?.id} value={dr.doctorProfile?.id}>
+                      Dr. {dr.firstName} {dr.lastName} ({dr.doctorProfile?.specialization || 'General Doctor'})
                     </option>
                   ))}
                 </select>
                 <p className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
-                  <span>Consultation Fee: ₹{activeDoctor.fee}</span>
+                  <span>Consultation Fee: ₹{activeDoctorFee}</span>
                   <span className="text-teal-600 font-semibold uppercase tracking-wider">Multi-tenant default</span>
                 </p>
               </div>

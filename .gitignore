@@ -39,3 +39,5 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+*/.sisyphus/run-continuation/ses_192627ce2ffenY7VLKdOSLP5MG.json

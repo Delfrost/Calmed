@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Pill,
@@ -80,9 +80,10 @@ const MOCK_PRESCRIPTIONS: PendingPrescription[] = [
 ];
 
 export default function PharmacistRxQueue() {
-  const [prescriptions, setPrescriptions] = useState<PendingPrescription[]>(MOCK_PRESCRIPTIONS);
+  const [prescriptions, setPrescriptions] = useState<PendingPrescription[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [selectedRx, setSelectedRx] = useState<PendingPrescription | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedRx, setSelectedRx] = useState<PendingPrescription | null>(MOCK_PRESCRIPTIONS[0]);
 
   // Dispensing flow states
   const [isDispensing, setIsDispensing] = useState(false);
@@ -91,6 +92,80 @@ export default function PharmacistRxQueue() {
   // Substitute editor states
   const [editSubstituteItemId, setEditSubstituteItemId] = useState<string | null>(null);
   const [substituteValue, setSubstituteValue] = useState('');
+
+  const fetchPrescriptions = async () => {
+    try {
+      setIsLoading(true);
+      const res = await fetch('/api/prescriptions?status=SENT_TO_PHARMACY');
+      if (res.ok) {
+        const data = await res.json();
+        const mapped = data.prescriptions.map((rx: any) => {
+          const items = rx.items.map((item: any) => {
+            const availableStock = item.medicine.batches?.reduce((acc: number, b: any) => acc + b.quantity, 0) ?? 0;
+            return {
+              id: item.id,
+              medicineName: item.medicine.name,
+              genericName: item.medicine.genericName || '',
+              dosage: item.dosage,
+              frequency: item.frequency,
+              duration: item.duration,
+              prescribedQty: item.quantity,
+              availableStock,
+              substituteNotes: item.substituteNote || '',
+            };
+          });
+
+          return {
+            id: rx.id,
+            patientName: `${rx.patient.firstName} ${rx.patient.lastName}`,
+            patientAge: rx.patient.dateOfBirth
+              ? new Date().getFullYear() - new Date(rx.patient.dateOfBirth).getFullYear()
+              : 0,
+            patientGender: rx.patient.gender || 'Male',
+            diagnosis: rx.diagnosis || 'General Advice',
+            doctorId: rx.doctorId,
+            doctorName: `Dr. ${rx.doctor.user.firstName} ${rx.doctor.user.lastName}`,
+            items,
+            status: rx.status === 'SENT_TO_PHARMACY' ? 'PENDING' : 'DISPENSED',
+            dateOrdered: new Date(rx.createdAt).toLocaleDateString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            }),
+          };
+        });
+
+        setPrescriptions(mapped);
+        
+        // Auto-select first prescription if none is active
+        if (mapped.length > 0) {
+          setSelectedRx((current) => {
+            if (current) {
+              const matched = mapped.find((m: any) => m.id === current.id);
+              return matched || mapped[0];
+            }
+            return mapped[0];
+          });
+        } else {
+          setSelectedRx(null);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load prescriptions:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPrescriptions();
+    // Poll for new prescriptions every 10 seconds
+    const interval = setInterval(fetchPrescriptions, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   const filteredRx = useMemo(() => {
     return prescriptions.filter((rx) => {
@@ -116,20 +191,31 @@ export default function PharmacistRxQueue() {
     setSubstituteValue('');
   };
 
-  const handleDispense = () => {
+  const handleDispense = async () => {
     if (!selectedRx) return;
     setIsDispensing(true);
 
-    // Simulate batch-level FIFO depletion updates
-    setTimeout(() => {
-      setPrescriptions((prev) =>
-        prev.map((rx) => (rx.id === selectedRx.id ? { ...rx, status: 'DISPENSED' } : rx))
-      );
-      setSelectedRx({ ...selectedRx, status: 'DISPENSED' });
+    try {
+      const res = await fetch(`/api/prescriptions/${selectedRx.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'DISPENSED' }),
+      });
+
+      if (res.ok) {
+        setDispenseSuccess(true);
+        setTimeout(() => setDispenseSuccess(false), 2000);
+        await fetchPrescriptions();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to dispense prescription');
+      }
+    } catch (err) {
+      console.error('Dispensing error:', err);
+      alert('An unexpected error occurred during dispensing.');
+    } finally {
       setIsDispensing(false);
-      setDispenseSuccess(true);
-      setTimeout(() => setDispenseSuccess(false), 2000);
-    }, 1200);
+    }
   };
 
   return (
@@ -175,7 +261,12 @@ export default function PharmacistRxQueue() {
             </div>
 
             <div className="divide-y divide-slate-50 overflow-y-auto max-h-[460px]">
-              {filteredRx.map((rx) => {
+              {isLoading ? (
+                <div className="py-16 text-center text-slate-400">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-primary mx-auto mb-3" />
+                  <p className="text-[10px] uppercase font-bold tracking-wider">Loading active queue...</p>
+                </div>
+              ) : filteredRx.map((rx) => {
                 const isSelected = selectedRx?.id === rx.id;
                 return (
                   <button

@@ -35,7 +35,7 @@ interface TabItem {
 const tabsByRole: Record<UserRole, TabItem[]> = {
   [UserRole.DOCTOR]: [
     { label: 'Queue', href: '/doctor', icon: ClipboardList },
-    { label: 'Prescribe', href: '/doctor/prescription/p1', icon: FileText },
+    { label: 'Prescribe', href: '/doctor/prescription/patient-01', icon: FileText },
     { label: 'Records', href: '/doctor/patients', icon: Users },
   ],
   [UserRole.RECEPTIONIST]: [
