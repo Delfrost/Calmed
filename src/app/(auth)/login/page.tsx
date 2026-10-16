@@ -14,6 +14,9 @@ import {
   Pill,
   Settings,
   ShieldCheck,
+  HeartPulse,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -21,6 +24,7 @@ export default function Login() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loadingRole, setLoadingRole] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,6 +46,9 @@ export default function Login() {
     } else if (role === 'Administrator') {
       demoEmail = 'admin@medflow.in';
       demoPassword = 'admin123';
+    } else if (role === 'Nurse') {
+      demoEmail = 'nurse@medflow.in';
+      demoPassword = 'nurse123';
     }
 
     try {
@@ -132,6 +139,16 @@ export default function Login() {
       border: 'hover:border-amber-200',
       path: '/admin',
     },
+    {
+      roleName: 'Nurse',
+      userName: 'Sister Mary',
+      specialty: 'Head Ward Nurse',
+      icon: HeartPulse,
+      bg: 'from-rose-500 to-red-500',
+      text: 'text-rose-600',
+      border: 'hover:border-rose-200',
+      path: '/nurse',
+    },
   ];
 
   return (
@@ -202,13 +219,24 @@ export default function Login() {
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                   <input
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full h-10 pl-10 pr-4 rounded-xl border border-slate-200 text-sm outline-none transition-all placeholder:text-slate-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    className="w-full h-10 pl-10 pr-10 rounded-xl border border-slate-200 text-sm outline-none transition-all placeholder:text-slate-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
                 </div>
               </div>
 

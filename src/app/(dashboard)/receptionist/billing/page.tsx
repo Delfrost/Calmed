@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Receipt,
@@ -18,6 +19,7 @@ import {
   CreditCard,
   Building,
   User,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -25,79 +27,85 @@ interface InvoiceItem {
   description: string;
   quantity: number;
   unitPrice: number;
+  category?: string;
 }
 
 interface PendingInvoice {
   id: string;
+  billType: 'OPD' | 'IPD';
+  admissionId?: string;
   patientName: string;
   phone: string;
   doctorName: string;
   items: InvoiceItem[];
   status: 'PENDING' | 'PAID' | 'OVERDUE';
   date: string;
+  subtotal: number;
+  paidAmount: number;
+  balanceDue: number;
 }
 
-const MOCK_INVOICES: PendingInvoice[] = [
-  {
-    id: 'inv-101',
-    patientName: 'Rajesh Kumar',
-    phone: '+91 98765 43210',
-    doctorName: 'Dr. Anand Sharma',
-    items: [
-      { description: 'Cardiology Consultation Fee', quantity: 1, unitPrice: 500 },
-      { description: 'Paracetamol 500mg (10 tabs)', quantity: 2, unitPrice: 25 },
-      { description: 'Complete Blood Count (CBC)', quantity: 1, unitPrice: 350 },
-    ],
-    status: 'PENDING',
-    date: '2026-05-26',
-  },
-  {
-    id: 'inv-102',
-    patientName: 'Priya Sharma',
-    phone: '+91 98111 22233',
-    doctorName: 'Dr. Anand Sharma',
-    items: [
-      { description: 'Cardiology Consultation Fee', quantity: 1, unitPrice: 500 },
-      { description: 'Amoxicillin 500mg (10 caps)', quantity: 1, unitPrice: 80 },
-    ],
-    status: 'PAID',
-    date: '2026-05-26',
-  },
-  {
-    id: 'inv-103',
-    patientName: 'Amit Patel',
-    phone: '+91 98555 44433',
-    doctorName: 'Dr. Anand Sharma',
-    items: [
-      { description: 'Cardiology Consultation Fee', quantity: 1, unitPrice: 500 },
-      { description: 'ECG Analysis (12-Lead)', quantity: 1, unitPrice: 300 },
-    ],
-    status: 'PENDING',
-    date: '2026-05-26',
-  },
-];
+function BillingContent() {
+  const searchParams = useSearchParams();
+  const initialBillId = searchParams.get('billId') || '';
 
-export default function BillingDesk() {
-  const [invoices, setInvoices] = useState<PendingInvoice[]>(MOCK_INVOICES);
+  const [invoices, setInvoices] = useState<PendingInvoice[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedInvoice, setSelectedInvoice] = useState<PendingInvoice | null>(MOCK_INVOICES[0]);
+  const [selectedInvoice, setSelectedInvoice] = useState<PendingInvoice | null>(null);
   const [discountPercent, setDiscountPercent] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'UPI' | 'CARD'>('UPI');
+  const [billTypeFilter, setBillTypeFilter] = useState<'ALL' | 'OPD' | 'IPD'>('ALL');
 
   // Checkout modal QR states
   const [showQRModal, setShowQRModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
 
+  const fetchBills = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch('/api/billing');
+      if (res.ok) {
+        const data = await res.json();
+        const list = data.bills || [];
+        setInvoices(list);
+
+        // Try to find by query param first, otherwise first item
+        if (initialBillId) {
+          const match = list.find((b: any) => b.id === initialBillId);
+          if (match) {
+            setSelectedInvoice(match);
+            return;
+          }
+        }
+        if (list.length > 0) {
+          setSelectedInvoice(list[0]);
+        } else {
+          setSelectedInvoice(null);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load bills:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBills();
+  }, []);
+
   const filteredInvoices = useMemo(() => {
     return invoices.filter((inv) => {
-      const matchSearch =
+      const typeMatch = billTypeFilter === 'ALL' || inv.billType === billTypeFilter;
+      const searchMatch =
         inv.patientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        inv.id.includes(searchQuery) ||
+        inv.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
         inv.phone.includes(searchQuery);
-      return matchSearch;
+      return typeMatch && searchMatch;
     });
-  }, [invoices, searchQuery]);
+  }, [invoices, searchQuery, billTypeFilter]);
 
   // Invoice calculations
   const totals = useMemo(() => {
@@ -115,7 +123,7 @@ export default function BillingDesk() {
     return { subtotal, tax, discount, total };
   }, [selectedInvoice, discountPercent]);
 
-  const handleProcessPayment = () => {
+  const handleProcessPayment = async () => {
     if (!selectedInvoice) return;
     setIsProcessing(true);
 
@@ -123,31 +131,83 @@ export default function BillingDesk() {
       setShowQRModal(true);
       setIsProcessing(false);
     } else {
-      // Simulate cash payment settling
-      setTimeout(() => {
-        setInvoices((prev) =>
-          prev.map((inv) => (inv.id === selectedInvoice.id ? { ...inv, status: 'PAID' } : inv))
-        );
-        if (selectedInvoice) {
-          setSelectedInvoice({ ...selectedInvoice, status: 'PAID' });
+      try {
+        const res = await fetch('/api/billing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            billId: selectedInvoice.id,
+            billType: selectedInvoice.billType,
+            amountPaid: totals.total,
+            discountPercent,
+            paymentMethod,
+          }),
+        });
+
+        if (res.ok) {
+          setPaymentSuccess(true);
+          setTimeout(() => setPaymentSuccess(false), 2000);
+          await fetchBills();
+        } else {
+          const data = await res.json();
+          alert(data.error || 'Failed to process payment');
         }
+      } catch (err) {
+        console.error(err);
+        alert('An unexpected error occurred');
+      } finally {
         setIsProcessing(false);
-        setPaymentSuccess(true);
-        setTimeout(() => setPaymentSuccess(false), 2000);
-      }, 1000);
+      }
     }
   };
 
-  const handleConfirmUPIPayment = () => {
+  const handleConfirmUPIPayment = async () => {
     if (!selectedInvoice) return;
-    setInvoices((prev) =>
-      prev.map((inv) => (inv.id === selectedInvoice.id ? { ...inv, status: 'PAID' } : inv))
-    );
-    setSelectedInvoice({ ...selectedInvoice, status: 'PAID' });
-    setShowQRModal(false);
-    setPaymentSuccess(true);
-    setTimeout(() => setPaymentSuccess(false), 2000);
+    try {
+      const res = await fetch('/api/billing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          billId: selectedInvoice.id,
+          billType: selectedInvoice.billType,
+          amountPaid: totals.total,
+          discountPercent,
+          paymentMethod: 'UPI',
+        }),
+      });
+
+      if (res.ok) {
+        setShowQRModal(false);
+        setPaymentSuccess(true);
+        setTimeout(() => setPaymentSuccess(false), 2000);
+        await fetchBills();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to process payment');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('An unexpected error occurred');
+    }
   };
+
+  // Stats summaries
+  const stats = useMemo(() => {
+    let pendingCount = 0;
+    let settledRevenue = 0;
+    let totalRevenue = 0;
+
+    invoices.forEach((inv) => {
+      totalRevenue += inv.balanceDue + inv.paidAmount;
+      if (inv.status === 'PAID') {
+        settledRevenue += inv.paidAmount;
+      } else {
+        pendingCount++;
+      }
+    });
+
+    return { pendingCount, settledRevenue, totalRevenue };
+  }, [invoices]);
 
   return (
     <div className="space-y-6">
@@ -155,9 +215,9 @@ export default function BillingDesk() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-soft flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Pending Billing</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Pending Accounts</p>
             <p className="text-3xl font-extrabold text-slate-800 mt-1">
-              {invoices.filter((i) => i.status === 'PENDING').length}
+              {loading ? '...' : stats.pendingCount}
             </p>
           </div>
           <div className="h-10 w-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600">
@@ -167,9 +227,9 @@ export default function BillingDesk() {
 
         <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-soft flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Settled Today</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Settled Payments</p>
             <p className="text-3xl font-extrabold text-emerald-600 mt-1 font-display">
-              ₹{invoices.filter((i) => i.status === 'PAID').length * 1250}
+              ₹{loading ? '...' : stats.settledRevenue.toLocaleString('en-IN')}
             </p>
           </div>
           <div className="h-10 w-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600">
@@ -179,9 +239,9 @@ export default function BillingDesk() {
 
         <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-soft flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Estimated Revenue</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Unified billing Desk</p>
             <p className="text-3xl font-extrabold text-blue-600 mt-1 font-display">
-              ₹{invoices.length * 1100}
+              ₹{loading ? '...' : stats.totalRevenue.toLocaleString('en-IN')}
             </p>
           </div>
           <div className="h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
@@ -195,10 +255,29 @@ export default function BillingDesk() {
         <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 shadow-soft overflow-hidden flex flex-col justify-between">
           <div>
             <div className="p-5 border-b border-slate-100 space-y-4">
-              <h3 className="text-base font-bold text-slate-800 font-display flex items-center gap-2">
-                <Receipt className="h-5 w-5 text-blue-600" />
-                Unsettled Invoices
-              </h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-base font-bold text-slate-800 font-display flex items-center gap-2">
+                  <Receipt className="h-5 w-5 text-blue-600" />
+                  Unsettled Invoices
+                </h3>
+
+                <div className="flex gap-1 shrink-0 bg-slate-50 border border-slate-100 rounded-lg p-0.5">
+                  {(['ALL', 'OPD', 'IPD'] as const).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setBillTypeFilter(t)}
+                      className={cn(
+                        'px-2.5 py-1 rounded-md text-[9px] font-bold uppercase transition-colors',
+                        billTypeFilter === t
+                          ? 'bg-slate-950 text-white shadow-soft'
+                          : 'text-slate-500 hover:text-slate-800'
+                      )}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
@@ -206,66 +285,88 @@ export default function BillingDesk() {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search billing queue..."
-                  className="w-full h-9 pl-9 pr-4 rounded-xl border border-slate-200 text-xs outline-none focus:border-blue-400"
+                  placeholder="Search billing queue by name/phone/id..."
+                  className="w-full h-9 pl-9 pr-4 rounded-xl border border-slate-200 text-xs outline-none focus:border-blue-400 placeholder:text-slate-300"
                 />
               </div>
             </div>
 
             {/* List */}
-            <div className="divide-y divide-slate-50 overflow-y-auto max-h-[460px]">
-              {filteredInvoices.map((inv) => {
-                const totalAmount = inv.items.reduce(
-                  (sum, item) => sum + item.quantity * item.unitPrice,
-                  0
-                );
-                const isSelected = selectedInvoice?.id === inv.id;
+            <div className="divide-y divide-slate-50 overflow-y-auto max-h-[460px] no-scrollbar">
+              {loading ? (
+                <div className="py-20 text-center text-slate-400">
+                  <RefreshCw className="h-8 w-8 mx-auto animate-spin mb-3 text-blue-500" />
+                  <p className="text-xs">Fetching billing roster...</p>
+                </div>
+              ) : filteredInvoices.length === 0 ? (
+                <div className="py-16 text-center text-slate-400">
+                  <AlertCircle className="h-10 w-10 mx-auto mb-2 text-slate-200" />
+                  <p className="text-sm font-semibold">No unpaid invoices</p>
+                  <p className="text-xs">Queue is clear or apply other filters.</p>
+                </div>
+              ) : (
+                filteredInvoices.map((inv) => {
+                  const totalAmount = inv.items.reduce(
+                    (sum, item) => sum + item.quantity * item.unitPrice,
+                    0
+                  );
+                  const isSelected = selectedInvoice?.id === inv.id;
 
-                return (
-                  <button
-                    key={inv.id}
-                    onClick={() => {
-                      setSelectedInvoice(inv);
-                      setDiscountPercent(0);
-                    }}
-                    className={cn(
-                      'flex w-full items-center justify-between border-b border-slate-100 px-5 py-4 text-left transition-colors',
-                      isSelected ? 'bg-blue-50/40' : 'hover:bg-slate-50/50'
-                    )}
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-slate-800">{inv.patientName}</span>
-                        <span
-                          className={cn(
-                            'text-[9px] font-extrabold px-1.5 py-0.5 rounded-md uppercase tracking-wider',
-                            inv.status === 'PAID' && 'bg-emerald-50 text-emerald-700',
-                            inv.status === 'PENDING' && 'bg-amber-50 text-amber-700',
-                            inv.status === 'OVERDUE' && 'bg-red-50 text-red-700'
-                          )}
-                        >
-                          {inv.status}
-                        </span>
+                  return (
+                    <button
+                      key={inv.id}
+                      onClick={() => {
+                        setSelectedInvoice(inv);
+                        setDiscountPercent(0);
+                      }}
+                      className={cn(
+                        'flex w-full items-center justify-between border-b border-slate-100 px-5 py-4 text-left transition-colors',
+                        isSelected ? 'bg-blue-50/40' : 'hover:bg-slate-50/50'
+                      )}
+                    >
+                      <div className="min-w-0 pr-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-bold text-slate-800">{inv.patientName}</span>
+                          <span className={cn(
+                            'text-[8px] font-black px-1.5 py-0.5 rounded border tracking-wider',
+                            inv.billType === 'IPD' ? 'bg-rose-50 border-rose-100 text-rose-700' : 'bg-blue-50 border-blue-100 text-blue-700'
+                          )}>
+                            {inv.billType}
+                          </span>
+                          <span
+                            className={cn(
+                              'text-[9px] font-extrabold px-1.5 py-0.5 rounded-md uppercase tracking-wider',
+                              inv.status === 'PAID' && 'bg-emerald-50 text-emerald-700',
+                              inv.status === 'PENDING' && 'bg-amber-50 text-amber-700',
+                              inv.status === 'OVERDUE' && 'bg-red-50 text-red-700'
+                            )}
+                          >
+                            {inv.status}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Invoice: #{inv.id.slice(-6).toUpperCase()} · {inv.date}
+                        </p>
                       </div>
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        Invoice: #{inv.id} · {inv.date}
-                      </p>
-                    </div>
 
-                    <div className="text-right shrink-0">
-                      <p className="text-xs font-bold text-slate-800 font-display">
-                        ₹{totalAmount.toFixed(2)}
-                      </p>
-                      <p className="text-[9px] text-slate-400 mt-0.5">{inv.items.length} items</p>
-                    </div>
-                  </button>
-                );
-              })}
+                      <div className="text-right shrink-0">
+                        <p className="text-xs font-bold text-slate-800 font-display">
+                          ₹{totalAmount.toFixed(2)}
+                        </p>
+                        <p className="text-[9px] text-slate-400 mt-0.5">{inv.items.length} charges</p>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
 
-          <div className="px-5 py-4 bg-slate-50/50 border-t border-slate-100 text-xs text-slate-400">
-            Consultations, pharmacy bills, and lab costs are unified here.
+          <div className="px-5 py-4 bg-slate-50/50 border-t border-slate-100 text-xs text-slate-400 flex items-center justify-between">
+            <span>Unified ledger system.</span>
+            <button onClick={fetchBills} className="hover:text-slate-800 flex items-center gap-1 font-bold">
+              <RefreshCw className="h-3 w-3" /> Refresh
+            </button>
           </div>
         </div>
 
@@ -276,23 +377,31 @@ export default function BillingDesk() {
               <div className="flex items-start justify-between border-b border-slate-100 pb-4">
                 <div>
                   <h4 className="text-base font-bold text-slate-800 font-display">
-                    Invoice Details — #{selectedInvoice.id}
+                    Invoice Details — #{selectedInvoice.id.toUpperCase()}
                   </h4>
                   <p className="text-xs text-slate-400 mt-0.5">
                     Patient: <span className="font-bold text-slate-600">{selectedInvoice.patientName}</span> ({selectedInvoice.phone})
                   </p>
                 </div>
 
-                <span
-                  className={cn(
-                    'px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider',
-                    selectedInvoice.status === 'PAID'
-                      ? 'bg-emerald-50 text-emerald-700'
-                      : 'bg-amber-50 text-amber-700'
-                  )}
-                >
-                  {selectedInvoice.status}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className={cn(
+                    'px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border',
+                    selectedInvoice.billType === 'IPD' ? 'bg-rose-50 border-rose-100 text-rose-700' : 'bg-blue-50 border-blue-100 text-blue-700'
+                  )}>
+                    {selectedInvoice.billType} BILLING
+                  </span>
+                  <span
+                    className={cn(
+                      'px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider',
+                      selectedInvoice.status === 'PAID'
+                        ? 'bg-emerald-50 text-emerald-700'
+                        : 'bg-amber-50 text-amber-700'
+                    )}
+                  >
+                    {selectedInvoice.status}
+                  </span>
+                </div>
               </div>
 
               {/* Itemized charges table */}
@@ -404,7 +513,7 @@ export default function BillingDesk() {
                   <div>
                     <h5 className="text-sm font-bold text-emerald-800">Invoice Fully Settled</h5>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      Completed via UPI transaction ref: <span className="font-semibold text-slate-600">TXN-43892</span>
+                      Completed via transaction ref: <span className="font-semibold text-slate-600">TXN-{selectedInvoice.id.slice(-4).toUpperCase()}</span>
                     </p>
                   </div>
                   <button
@@ -504,5 +613,18 @@ export default function BillingDesk() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+export default function BillingDesk() {
+  return (
+    <Suspense fallback={
+      <div className="py-24 text-center text-slate-400 bg-white border border-slate-100 rounded-2xl shadow-soft">
+        <RefreshCw className="h-8 w-8 mx-auto animate-spin mb-4 text-blue-500" />
+        <p className="font-semibold text-sm">Loading Unified Billing Desk...</p>
+      </div>
+    }>
+      <BillingContent />
+    </Suspense>
   );
 }

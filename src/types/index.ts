@@ -7,6 +7,7 @@ export enum UserRole {
   DOCTOR = 'DOCTOR',
   RECEPTIONIST = 'RECEPTIONIST',
   PHARMACIST = 'PHARMACIST',
+  NURSE = 'NURSE',
 }
 
 export enum AppointmentStatus {
@@ -98,6 +99,76 @@ export enum RefillStatus {
   SENT = 'SENT',
   ACKNOWLEDGED = 'ACKNOWLEDGED',
   CANCELLED = 'CANCELLED',
+}
+
+// ============================================================================
+// IPD Enums
+// ============================================================================
+
+export enum BedStatus {
+  VACANT = 'VACANT',
+  OCCUPIED = 'OCCUPIED',
+  MAINTENANCE = 'MAINTENANCE',
+  HOUSEKEEPING = 'HOUSEKEEPING',
+  RESERVED = 'RESERVED',
+}
+
+export enum WardType {
+  GENERAL = 'GENERAL',
+  SEMI_PRIVATE = 'SEMI_PRIVATE',
+  PRIVATE = 'PRIVATE',
+  ICU = 'ICU',
+  NICU = 'NICU',
+  PICU = 'PICU',
+  HDU = 'HDU',
+}
+
+export enum AdmissionStatus {
+  REQUESTED = 'REQUESTED',
+  ADMITTED = 'ADMITTED',
+  TRANSFERRED = 'TRANSFERRED',
+  DISCHARGED = 'DISCHARGED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum AdmissionSource {
+  OPD = 'OPD',
+  EMERGENCY = 'EMERGENCY',
+  DIRECT = 'DIRECT',
+  TRANSFER = 'TRANSFER',
+}
+
+export enum ShiftType {
+  MORNING = 'MORNING',
+  AFTERNOON = 'AFTERNOON',
+  NIGHT = 'NIGHT',
+}
+
+export enum MARStatus {
+  SCHEDULED = 'SCHEDULED',
+  ADMINISTERED = 'ADMINISTERED',
+  MISSED = 'MISSED',
+  HELD = 'HELD',
+  REFUSED = 'REFUSED',
+}
+
+export enum SurgeryStatus {
+  SCHEDULED = 'SCHEDULED',
+  PRE_OP = 'PRE_OP',
+  IN_PROGRESS = 'IN_PROGRESS',
+  POST_OP = 'POST_OP',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum TPAStatus {
+  PRE_AUTH_PENDING = 'PRE_AUTH_PENDING',
+  PRE_AUTH_APPROVED = 'PRE_AUTH_APPROVED',
+  PRE_AUTH_REJECTED = 'PRE_AUTH_REJECTED',
+  CLAIM_SUBMITTED = 'CLAIM_SUBMITTED',
+  CLAIM_APPROVED = 'CLAIM_APPROVED',
+  CLAIM_REJECTED = 'CLAIM_REJECTED',
+  CLAIM_SETTLED = 'CLAIM_SETTLED',
 }
 
 // ============================================================================
@@ -441,4 +512,231 @@ export interface PatientInfo {
   allergies: string[];
   chronicConditions: string[];
   visitCount: number;
+}
+
+// ============================================================================
+// IPD Interface Types
+// ============================================================================
+
+export interface Ward {
+  id: string;
+  clinicId: string;
+  name: string;
+  type: WardType;
+  floor: number;
+  rooms?: Room[];
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface Room {
+  id: string;
+  wardId: string;
+  ward?: Ward;
+  number: string;
+  dailyRate: number;
+  beds?: Bed[];
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface Bed {
+  id: string;
+  roomId: string;
+  room?: Room;
+  label: string;
+  status: BedStatus;
+  admissions?: Admission[];
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface Admission {
+  id: string;
+  clinicId: string;
+  patientId: string;
+  patient?: Patient;
+  admittingDoctorId: string;
+  admittingDoctor?: DoctorProfile;
+  attendingDoctorId?: string | null;
+  attendingDoctor?: DoctorProfile | null;
+  bedId: string;
+  bed?: Bed;
+  admissionNumber: string;
+  status: AdmissionStatus;
+  source: AdmissionSource;
+  admittedAt?: Date | string | null;
+  dischargedAt?: Date | string | null;
+  expectedDischargeDate?: Date | string | null;
+  diagnosis?: string | null;
+  chiefComplaints?: string | null;
+  notes?: string | null;
+  appointmentId?: string | null;
+  vitalsLogs?: VitalsLog[];
+  progressNotes?: ProgressNote[];
+  medicationOrders?: MedicationOrder[];
+  shiftHandovers?: ShiftHandover[];
+  surgeries?: Surgery[];
+  ipdBill?: IPDBill | null;
+  tpaRecord?: TPARecord | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface VitalsLog {
+  id: string;
+  admissionId: string;
+  admission?: Admission;
+  temperature?: number | null;
+  systolicBP?: number | null;
+  diastolicBP?: number | null;
+  heartRate?: number | null;
+  spO2?: number | null;
+  respiratoryRate?: number | null;
+  painScale?: number | null;
+  notes?: string | null;
+  recordedBy: string; // User ID (nurse)
+  recordedAt: Date | string;
+}
+
+export interface ProgressNote {
+  id: string;
+  admissionId: string;
+  admission?: Admission;
+  doctorId: string;
+  doctor?: DoctorProfile;
+  content: string;
+  assessment?: string | null;
+  plan?: string | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface MedicationOrder {
+  id: string;
+  admissionId: string;
+  admission?: Admission;
+  medicineId: string;
+  medicine?: Medicine;
+  dosage: string;
+  frequency: string;
+  route: string;
+  startDate: Date | string;
+  endDate?: Date | string | null;
+  instructions?: string | null;
+  orderedBy: string; // Doctor User ID
+  isActive: boolean;
+  marEntries?: MAREntry[];
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface MAREntry {
+  id: string;
+  medicationOrderId: string;
+  medicationOrder?: MedicationOrder;
+  scheduledTime: Date | string;
+  status: MARStatus;
+  administeredAt?: Date | string | null;
+  administeredBy?: string | null; // Nurse User ID
+  notes?: string | null;
+  createdAt: Date | string;
+}
+
+export interface ShiftHandover {
+  id: string;
+  admissionId: string;
+  admission?: Admission;
+  shiftType: ShiftType;
+  shiftDate: Date | string;
+  shiftStartHour: number;
+  shiftDurationHrs: number;
+  outgoingNurseId: string;
+  incomingNurseId?: string | null;
+  criticalNotes: string;
+  generalNotes?: string | null;
+  acknowledgedAt?: Date | string | null;
+  createdAt: Date | string;
+}
+
+export interface Surgery {
+  id: string;
+  admissionId: string;
+  admission?: Admission;
+  clinicId: string;
+  name: string;
+  surgeonId: string;
+  surgeon?: DoctorProfile;
+  anesthetistId?: string | null;
+  anesthetist?: DoctorProfile | null;
+  otRoom: string;
+  scheduledStart: Date | string;
+  scheduledEnd: Date | string;
+  actualStart?: Date | string | null;
+  actualEnd?: Date | string | null;
+  status: SurgeryStatus;
+  preOpChecklist?: any | null; // JSON
+  postOpChecklist?: any | null; // JSON
+  estimatedCost?: number | null;
+  notes?: string | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface IPDBill {
+  id: string;
+  admissionId: string;
+  admission?: Admission;
+  clinicId: string;
+  roomCharges: number;
+  doctorVisitFees: number;
+  nursingCharges: number;
+  pharmacyCharges: number;
+  surgeryCharges: number;
+  labCharges: number;
+  miscCharges: number;
+  totalAmount: number;
+  discountAmount: number;
+  taxAmount: number;
+  paidAmount: number;
+  balanceDue: number;
+  lastAccruedAt?: Date | string | null;
+  billItems?: IPDBillItem[];
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface IPDBillItem {
+  id: string;
+  ipdBillId: string;
+  ipdBill?: IPDBill;
+  category: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  date: Date | string;
+  referenceId?: string | null;
+  referenceType?: string | null;
+  createdAt: Date | string;
+}
+
+export interface TPARecord {
+  id: string;
+  admissionId: string;
+  admission?: Admission;
+  insurerName: string;
+  policyNumber: string;
+  tpaName?: string | null;
+  memberId?: string | null;
+  preAuthAmount?: number | null;
+  approvedAmount?: number | null;
+  claimAmount?: number | null;
+  settledAmount?: number | null;
+  status: TPAStatus;
+  preAuthDocUrl?: string | null;
+  claimDocUrl?: string | null;
+  notes?: string | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 }

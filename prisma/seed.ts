@@ -6,6 +6,26 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Seeding database...');
 
+  // Truncate all tables to start fresh
+  try {
+    const tablenames = await prisma.$queryRaw<
+      Array<{ tablename: string }>
+    >`SELECT tablename FROM pg_tables WHERE schemaname='public'`;
+
+    const tables = tablenames
+      .map(({ tablename }) => tablename)
+      .filter((name) => name !== '_prisma_migrations')
+      .map((name) => `"${name}"`)
+      .join(', ');
+
+    if (tables.length > 0) {
+      await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${tables} CASCADE;`);
+      console.log('✅ All tables truncated successfully.');
+    }
+  } catch (error) {
+    console.warn('⚠️ Truncation failed, continuing without truncation:', error);
+  }
+
   // ─── 1. Clinic ────────────────────────────────────────────────────
   const clinic = await prisma.clinic.create({
     data: {
@@ -383,6 +403,354 @@ async function main() {
 
   console.log('✅ 1 draft prescription created');
 
+  // ─── 10. Nurse User ────────────────────────────────────────────────
+  const passwordNurse = await hash('nurse123', 12);
+  const nurse = await prisma.user.create({
+    data: {
+      id: 'user-nurse-01',
+      clinicId: clinic.id,
+      email: 'nurse@medflow.in',
+      passwordHash: passwordNurse,
+      firstName: 'Mary',
+      lastName: 'Sister',
+      phone: '+91-9876543250',
+      role: 'NURSE',
+      isActive: true,
+    },
+  });
+  console.log('✅ Nurse user created:', nurse.email);
+
+  // ─── 11. Wards, Rooms & Beds ────────────────────────────────────────
+  // General Ward
+  const generalWard = await prisma.ward.create({
+    data: {
+      id: 'ward-general',
+      clinicId: clinic.id,
+      name: 'General Ward A',
+      type: 'GENERAL',
+      floor: 1,
+    },
+  });
+
+  const room101 = await prisma.room.create({
+    data: {
+      id: 'room-101',
+      wardId: generalWard.id,
+      number: '101',
+      dailyRate: 1200,
+    },
+  });
+
+  const room102 = await prisma.room.create({
+    data: {
+      id: 'room-102',
+      wardId: generalWard.id,
+      number: '102',
+      dailyRate: 1200,
+    },
+  });
+
+  await prisma.bed.createMany({
+    data: [
+      { id: 'bed-101-a', roomId: room101.id, label: 'Bed A', status: 'OCCUPIED' },
+      { id: 'bed-101-b', roomId: room101.id, label: 'Bed B', status: 'VACANT' },
+      { id: 'bed-102-a', roomId: room102.id, label: 'Bed A', status: 'VACANT' },
+      { id: 'bed-102-b', roomId: room102.id, label: 'Bed B', status: 'VACANT' },
+    ],
+  });
+
+  // Private Ward
+  const privateWard = await prisma.ward.create({
+    data: {
+      id: 'ward-private',
+      clinicId: clinic.id,
+      name: 'Deluxe Private Ward',
+      type: 'PRIVATE',
+      floor: 2,
+    },
+  });
+
+  const room201 = await prisma.room.create({
+    data: {
+      id: 'room-201',
+      wardId: privateWard.id,
+      number: '201',
+      dailyRate: 4500,
+    },
+  });
+
+  await prisma.bed.createMany({
+    data: [
+      { id: 'bed-201-a', roomId: room201.id, label: 'Bed A', status: 'OCCUPIED' },
+      { id: 'bed-201-b', roomId: room201.id, label: 'Bed B', status: 'VACANT' },
+    ],
+  });
+
+  // ICU Ward
+  const icuWard = await prisma.ward.create({
+    data: {
+      id: 'ward-icu',
+      clinicId: clinic.id,
+      name: 'Intensive Care Unit',
+      type: 'ICU',
+      floor: 3,
+    },
+  });
+
+  const room301 = await prisma.room.create({
+    data: {
+      id: 'room-301',
+      wardId: icuWard.id,
+      number: '301',
+      dailyRate: 9500,
+    },
+  });
+
+  await prisma.bed.createMany({
+    data: [
+      { id: 'bed-301-a', roomId: room301.id, label: 'Bed A', status: 'VACANT' },
+      { id: 'bed-301-b', roomId: room301.id, label: 'Bed B', status: 'VACANT' },
+    ],
+  });
+
+  console.log('✅ Wards, Rooms, and Beds hierarchy seeded');
+
+  // ─── 12. Active Admissions (ADT) ──────────────────────────────────
+  const admission1 = await prisma.admission.create({
+    data: {
+      id: 'adm-01',
+      clinicId: clinic.id,
+      patientId: 'patient-01',
+      admittingDoctorId: doctorProfile1.id,
+      attendingDoctorId: doctorProfile1.id,
+      bedId: 'bed-101-a',
+      admissionNumber: 'ADM-2026-0001-9872',
+      status: 'ADMITTED',
+      source: 'OPD',
+      admittedAt: new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000), // Admitted 2 days ago
+      diagnosis: 'Severe chest pain / Observation',
+      chiefComplaints: 'Shortness of breath and palpitations',
+      notes: 'Evaluate cardiac markers and monitor ECG.',
+    },
+  });
+
+  const admission2 = await prisma.admission.create({
+    data: {
+      id: 'adm-02',
+      clinicId: clinic.id,
+      patientId: 'patient-02',
+      admittingDoctorId: doctorProfile1.id,
+      attendingDoctorId: doctorProfile2.id,
+      bedId: 'bed-201-a',
+      admissionNumber: 'ADM-2026-0002-3841',
+      status: 'ADMITTED',
+      source: 'EMERGENCY',
+      admittedAt: new Date(today.getTime() - 1 * 24 * 60 * 60 * 1000), // Admitted 1 day ago
+      diagnosis: 'Cellulitis / Lower limb skin infection',
+      chiefComplaints: 'Swelling and redness on left calf',
+    },
+  });
+
+  console.log('✅ 2 active admissions created');
+
+  // ─── 13. Clinical Logs (Vitals & Progress Notes) ──────────────────
+  // Vitals logs
+  await prisma.vitalsLog.createMany({
+    data: [
+      {
+        admissionId: admission1.id,
+        temperature: 98.6,
+        systolicBP: 130,
+        diastolicBP: 85,
+        heartRate: 82,
+        spO2: 97,
+        respiratoryRate: 18,
+        painScale: 2,
+        notes: 'Resting comfortably.',
+        recordedBy: nurse.id,
+        recordedAt: new Date(today.getTime() - 12 * 60 * 60 * 1000),
+      },
+      {
+        admissionId: admission1.id,
+        temperature: 99.1,
+        systolicBP: 135,
+        diastolicBP: 90,
+        heartRate: 88,
+        spO2: 95,
+        respiratoryRate: 20,
+        painScale: 4,
+        notes: 'Complaining of mild dyspnea.',
+        recordedBy: nurse.id,
+        recordedAt: new Date(),
+      },
+    ],
+  });
+
+  // Progress Note
+  await prisma.progressNote.create({
+    data: {
+      admissionId: admission1.id,
+      doctorId: doctorProfile1.id,
+      content: 'Patient assessed during morning rounds. Chest pain is non-exertional. ECG shows normal sinus rhythm without acute changes.',
+      assessment: 'R/O Angina',
+      plan: 'Continue telemetry monitoring. Keep NPO for stress test tomorrow.',
+    },
+  });
+
+  console.log('✅ Inpatient vitals flowsheet & rounds notes seeded');
+
+  // ─── 14. Medication Orders & MAR ─────────────────────────────────
+  const pcmMed = await prisma.medicine.findFirst({ where: { name: 'Paracetamol' } });
+  if (pcmMed) {
+    const medOrder = await prisma.medicationOrder.create({
+      data: {
+        admissionId: admission1.id,
+        medicineId: pcmMed.id,
+        dosage: '500mg',
+        frequency: 'Every 12 hours',
+        route: 'ORAL',
+        startDate: new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000),
+        endDate: new Date(today.getTime() + 1 * 24 * 60 * 60 * 1000),
+        instructions: 'After meals',
+        orderedBy: doctor.id,
+      },
+    });
+
+    await prisma.mAREntry.createMany({
+      data: [
+        {
+          medicationOrderId: medOrder.id,
+          scheduledTime: new Date(today.getTime() - 24 * 60 * 60 * 1000 + 9 * 60 * 60 * 1000), // yesterday 9 AM
+          status: 'ADMINISTERED',
+          administeredAt: new Date(today.getTime() - 24 * 60 * 60 * 1000 + 9.5 * 60 * 60 * 1000),
+          administeredBy: nurse.id,
+          notes: 'Administered after breakfast.',
+        },
+        {
+          medicationOrderId: medOrder.id,
+          scheduledTime: new Date(today.getTime() - 24 * 60 * 60 * 1000 + 21 * 60 * 60 * 1000), // yesterday 9 PM
+          status: 'ADMINISTERED',
+          administeredAt: new Date(today.getTime() - 24 * 60 * 60 * 1000 + 21.2 * 60 * 60 * 1000),
+          administeredBy: nurse.id,
+          notes: 'Given with water.',
+        },
+        {
+          medicationOrderId: medOrder.id,
+          scheduledTime: new Date(today.getTime() + 9 * 60 * 60 * 1000), // today 9 AM
+          status: 'SCHEDULED',
+        },
+        {
+          medicationOrderId: medOrder.id,
+          scheduledTime: new Date(today.getTime() + 21 * 60 * 60 * 1000), // today 9 PM
+          status: 'SCHEDULED',
+        },
+      ],
+    });
+  }
+
+  // ─── 15. Shift Handovers ──────────────────────────────────────────
+  await prisma.shiftHandover.create({
+    data: {
+      admissionId: admission1.id,
+      shiftType: 'MORNING',
+      shiftDate: today,
+      criticalNotes: 'Keep NPO for diagnostic stress test at 11am. Monitor SpO2 closely.',
+      generalNotes: 'Patient was anxious during night shift but slept after reassurance.',
+      outgoingNurseId: nurse.id,
+      acknowledgedAt: new Date(),
+      incomingNurseId: nurse.id,
+    },
+  });
+
+  // ─── 16. OT Scheduled Surgery ─────────────────────────────────────
+  await prisma.surgery.create({
+    data: {
+      id: 'surgery-01',
+      admissionId: admission1.id,
+      clinicId: clinic.id,
+      name: 'Diagnostic Coronary Angiography',
+      surgeonId: doctorProfile1.id,
+      anesthetistId: doctorProfile2.id,
+      otRoom: 'OT-1',
+      scheduledStart: new Date(today.getTime() + 18 * 60 * 60 * 1000), // today 6 PM
+      scheduledEnd: new Date(today.getTime() + 19 * 60 * 60 * 1000),   // today 7 PM
+      estimatedCost: 18000,
+      notes: 'Prepare cardiac OT setting.',
+      status: 'SCHEDULED',
+    },
+  });
+
+  // ─── 17. IPD Bills ────────────────────────────────────────────────
+  const bill1 = await prisma.iPDBill.create({
+    data: {
+      id: 'bill-ipd-01',
+      admissionId: admission1.id,
+      clinicId: clinic.id,
+      roomCharges: 2400, // 2 days x 1200
+      doctorVisitFees: 1000,
+      nursingCharges: 400,
+      pharmacyCharges: 250,
+      surgeryCharges: 0,
+      labCharges: 350,
+      miscCharges: 100,
+      totalAmount: 4500,
+      paidAmount: 1500,
+      balanceDue: 3000,
+      lastAccruedAt: today,
+    },
+  });
+
+  await prisma.iPDBillItem.createMany({
+    data: [
+      { ipdBillId: bill1.id, category: 'ROOM', description: 'Room Rent: Room 101 - General Ward', quantity: 2, unitPrice: 1200, totalPrice: 2400, date: new Date(today.getTime() - 24 * 60 * 60 * 1000) },
+      { ipdBillId: bill1.id, category: 'DOCTOR_VISIT', description: 'Doctor rounds fee - Dr. Anand Sharma', quantity: 2, unitPrice: 500, totalPrice: 1000, date: new Date(today.getTime() - 24 * 60 * 60 * 1000) },
+      { ipdBillId: bill1.id, category: 'LAB', description: 'Complete Blood Count (CBC) test charges', quantity: 1, unitPrice: 350, totalPrice: 350, date: new Date(today.getTime() - 24 * 60 * 60 * 1000) },
+    ],
+  });
+
+  const bill2 = await prisma.iPDBill.create({
+    data: {
+      id: 'bill-ipd-02',
+      admissionId: admission2.id,
+      clinicId: clinic.id,
+      roomCharges: 4500, // 1 day x 4500
+      totalAmount: 4500,
+      balanceDue: 4500,
+      lastAccruedAt: today,
+    },
+  });
+
+  await prisma.iPDBillItem.create({
+    data: {
+      ipdBillId: bill2.id,
+      category: 'ROOM',
+      description: 'Room Rent: Room 201 - Private Deluxe',
+      quantity: 1,
+      unitPrice: 4500,
+      totalPrice: 4500,
+      date: new Date(today.getTime() - 24 * 60 * 60 * 1000),
+    },
+  });
+
+  console.log('✅ IPD Bills & itemized ledger entries seeded');
+
+  // ─── 18. TPA Insurance Records ────────────────────────────────────
+  await prisma.tPARecord.create({
+    data: {
+      admissionId: admission2.id,
+      insurerName: 'Star Health Insurance',
+      policyNumber: 'STAR-IPD-98721A',
+      tpaName: 'Medi Assist',
+      memberId: 'STAR-MEM-77218',
+      preAuthAmount: 50000,
+      approvedAmount: 40000,
+      status: 'PRE_AUTH_APPROVED',
+      notes: 'Pre-auth approved. Original ID card copies collected.',
+    },
+  });
+
+  console.log('✅ TPA Insurance claim tracking records seeded');
+
   console.log('\n🎉 Database seeded successfully!');
   console.log('\n📋 Login Credentials:');
   console.log('  Doctor 1:      doctor@medflow.in      / doctor123');
@@ -390,6 +758,7 @@ async function main() {
   console.log('  Receptionist:  receptionist@medflow.in / reception123');
   console.log('  Pharmacist:    pharmacist@medflow.in   / pharma123');
   console.log('  Admin:         admin@medflow.in        / admin123');
+  console.log('  Nurse:         nurse@medflow.in        / nurse123');
 }
 
 main()

@@ -1,23 +1,16 @@
 import { auth } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
-const protectedPrefixes = ['/doctor', '/receptionist', '/pharmacist', '/admin'];
-
 const roleRouteMap: Record<string, string> = {
   DOCTOR: '/doctor',
   RECEPTIONIST: '/receptionist',
   PHARMACIST: '/pharmacist',
   ADMIN: '/admin',
+  NURSE: '/nurse',
 };
 
-/**
- * Next.js 16 Proxy (formerly Middleware).
- *
- * NextAuth's `auth()` wrapper returns a `NextMiddleware`-compatible function
- * which populates `req.auth` with the current session. We export it as the
- * default export — Next.js 16 accepts either `export default` or a named
- * `export function proxy` from this file.
- */
+const protectedPrefixes = Object.values(roleRouteMap);
+
 export default auth((req) => {
   const { pathname } = req.nextUrl;
   const isProtected = protectedPrefixes.some((p) => pathname.startsWith(p));

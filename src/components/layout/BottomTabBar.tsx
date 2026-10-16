@@ -18,6 +18,9 @@ import {
   TrendingUp,
   DollarSign,
   Settings,
+  HeartPulse,
+  Activity,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { UserRole } from '@/types';
@@ -55,6 +58,12 @@ const tabsByRole: Record<UserRole, TabItem[]> = {
     { label: 'Revenue', href: '/admin/revenue', icon: TrendingUp },
     { label: 'Payouts', href: '/admin/payouts', icon: DollarSign },
     { label: 'Settings', href: '/admin/settings', icon: Settings },
+  ],
+  [UserRole.NURSE]: [
+    { label: 'Patients', href: '/nurse', icon: HeartPulse },
+    { label: 'Vitals', href: '/nurse/vitals', icon: Activity },
+    { label: 'MAR', href: '/nurse/mar', icon: Pill },
+    { label: 'Handover', href: '/nurse/handover', icon: ArrowRightLeft },
   ],
 };
 

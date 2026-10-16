@@ -19,6 +19,7 @@ enum UserRole {
   DOCTOR
   RECEPTIONIST
   PHARMACIST
+  NURSE
 }
 
 enum AppointmentStatus {
@@ -113,6 +114,76 @@ enum RefillStatus {
 }
 
 // ============================================================================
+// IPD ENUMS
+// ============================================================================
+
+enum BedStatus {
+  VACANT
+  OCCUPIED
+  MAINTENANCE
+  HOUSEKEEPING
+  RESERVED
+}
+
+enum WardType {
+  GENERAL
+  SEMI_PRIVATE
+  PRIVATE
+  ICU
+  NICU
+  PICU
+  HDU
+}
+
+enum AdmissionStatus {
+  REQUESTED
+  ADMITTED
+  TRANSFERRED
+  DISCHARGED
+  CANCELLED
+}
+
+enum AdmissionSource {
+  OPD
+  EMERGENCY
+  DIRECT
+  TRANSFER
+}
+
+enum ShiftType {
+  MORNING
+  AFTERNOON
+  NIGHT
+}
+
+enum MARStatus {
+  SCHEDULED
+  ADMINISTERED
+  MISSED
+  HELD
+  REFUSED
+}
+
+enum SurgeryStatus {
+  SCHEDULED
+  PRE_OP
+  IN_PROGRESS
+  POST_OP
+  COMPLETED
+  CANCELLED
+}
+
+enum TPAStatus {
+  PRE_AUTH_PENDING
+  PRE_AUTH_APPROVED
+  PRE_AUTH_REJECTED
+  CLAIM_SUBMITTED
+  CLAIM_APPROVED
+  CLAIM_REJECTED
+  CLAIM_SETTLED
+}
+
+// ============================================================================
 // CLINIC (Root Entity)
 // ============================================================================
 
@@ -140,6 +211,12 @@ model Clinic {
   labTests     LabTest[]
   invoices     Invoice[]
   payouts      DoctorPayout[]
+
+  // IPD Relations
+  wards        Ward[]
+  admissions   Admission[]
+  surgeries    Surgery[]
+  ipdBills     IPDBill[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -200,6 +277,13 @@ model DoctorProfile {
   queueTokens   QueueToken[]
   payouts       DoctorPayout[]
 
+  // IPD Relations
+  admittedPatients   Admission[] @relation("AdmittingDoctor")
+  attendingPatients  Admission[] @relation("AttendingDoctor")
+  progressNotes      ProgressNote[]
+  leadSurgeries      Surgery[]   @relation("LeadSurgeon")
+  anesthetistSurgeries Surgery[] @relation("Anesthetist")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -238,6 +322,9 @@ model Patient {
   labReports     LabReport[]
   invoices       Invoice[]
   refillReminders RefillReminder[]
+
+  // IPD Relations
+  admissions     Admission[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -401,6 +488,9 @@ model Medicine {
   batches           MedicineBatch[]
   prescriptionItems PrescriptionItem[]
   refillReminders   RefillReminder[]
+
+  // IPD Relations
+  medicationOrders  MedicationOrder[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -681,4 +771,372 @@ model AuditLog {
   @@index([userId])
   @@index([resource, resourceId])
   @@index([createdAt])
+}
+
+// ============================================================================
+// IPD — WARD, ROOM & BED HIERARCHY
+// ============================================================================
+
+model Ward {
+  id       String   @id @default(cuid())
+  clinicId String
+  clinic   Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  name      String       // "Ward A", "ICU-1"
+  type      WardType
+  floor     Int      @default(0)
+
+  // Relations
+  rooms Room[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([clinicId, name])
+  @@index([clinicId])
+  @@index([type])
+}
+
+model Room {
+  id     String @id @default(cuid())
+  wardId String
+  ward   Ward   @relation(fields: [wardId], references: [id], onDelete: Cascade)
+
+  number    String               // "101", "ICU-A1"
+  dailyRate Decimal @db.Decimal(10, 2) // Per-room pricing (per user request)
+
+  // Relations
+  beds Bed[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([wardId, number])
+  @@index([wardId])
+}
+
+model Bed {
+  id     String @id @default(cuid())
+  roomId String
+  room   Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  label  String              // "Bed 1", "Bed A"
+  status BedStatus @default(VACANT)
+
+  // Relations
+  admissions Admission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([roomId, label])
+  @@index([roomId])
+  @@index([status])
+}
+
+// ============================================================================
+// IPD — ADMISSION, DISCHARGE & TRANSFER (ADT)
+// ============================================================================
+
+model Admission {
+  id       String @id @default(cuid())
+  clinicId String
+  clinic   Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  admittingDoctorId String
+  admittingDoctor   DoctorProfile @relation("AdmittingDoctor", fields: [admittingDoctorId], references: [id], onDelete: Cascade)
+
+  attendingDoctorId String?
+  attendingDoctor   DoctorProfile? @relation("AttendingDoctor", fields: [attendingDoctorId], references: [id])
+
+  bedId String?
+  bed   Bed? @relation(fields: [bedId], references: [id])
+
+  admissionNumber String          @unique  // "ADM-2026-00001"
+  status          AdmissionStatus @default(REQUESTED)
+  source          AdmissionSource @default(OPD)
+
+  admittedAt      DateTime?
+  dischargedAt    DateTime?
+  expectedDischargeDate DateTime?
+
+  diagnosis       String?
+  chiefComplaints String?
+  notes           String?
+
+  // Link back to OPD appointment that triggered admission
+  appointmentId String?
+
+  // Relations
+  vitalsLogs       VitalsLog[]
+  progressNotes    ProgressNote[]
+  medicationOrders MedicationOrder[]
+  shiftHandovers   ShiftHandover[]
+  surgeries        Surgery[]
+  ipdBill          IPDBill?
+  tpaRecord        TPARecord?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clinicId, status])
+  @@index([patientId])
+  @@index([bedId])
+  @@index([admittingDoctorId])
+  @@index([attendingDoctorId])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// IPD — NURSING STATION
+// ============================================================================
+
+model VitalsLog {
+  id          String    @id @default(cuid())
+  admissionId String
+  admission   Admission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+
+  temperature     Decimal? @db.Decimal(4, 1)  // °F (e.g., 98.6)
+  systolicBP      Int?                         // mmHg
+  diastolicBP     Int?                         // mmHg
+  heartRate       Int?                         // bpm
+  spO2            Int?                         // percentage
+  respiratoryRate Int?                         // breaths/min
+  painScale       Int?                         // 0-10
+  notes           String?
+
+  recordedBy String                            // User ID (nurse)
+  recordedAt DateTime @default(now())
+
+  @@index([admissionId, recordedAt])
+  @@index([recordedBy])
+}
+
+model ProgressNote {
+  id          String    @id @default(cuid())
+  admissionId String
+  admission   Admission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+
+  doctorId String
+  doctor   DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  content    String     // Rich text / free-form clinical notes
+  assessment String?    // Doctor's assessment
+  plan       String?    // Treatment plan
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([admissionId])
+  @@index([doctorId])
+  @@index([createdAt])
+}
+
+model MedicationOrder {
+  id          String    @id @default(cuid())
+  admissionId String
+  admission   Admission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+
+  medicineId String
+  medicine   Medicine @relation(fields: [medicineId], references: [id])
+
+  dosage       String                          // "500mg", "10ml"
+  frequency    String                          // "Every 8 hours", "BD", "TDS", "QID"
+  route        String  @default("ORAL")        // ORAL, IV, IM, SC, TOPICAL, INHALATION
+  startDate    DateTime
+  endDate      DateTime?
+  instructions String?
+  orderedBy    String                          // Doctor user ID
+  isActive     Boolean @default(true)
+
+  // Relations
+  marEntries MAREntry[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([admissionId])
+  @@index([medicineId])
+  @@index([isActive])
+}
+
+model MAREntry {
+  id                String          @id @default(cuid())
+  medicationOrderId String
+  medicationOrder   MedicationOrder @relation(fields: [medicationOrderId], references: [id], onDelete: Cascade)
+
+  scheduledTime  DateTime
+  status         MARStatus @default(SCHEDULED)
+  administeredAt DateTime?
+  administeredBy String?                       // Nurse User ID
+  notes          String?
+
+  createdAt DateTime @default(now())
+
+  @@index([medicationOrderId, scheduledTime])
+  @@index([status])
+  @@index([administeredBy])
+}
+
+model ShiftHandover {
+  id          String    @id @default(cuid())
+  admissionId String
+  admission   Admission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+
+  shiftType       ShiftType
+  shiftDate       DateTime                     // Date of the shift
+  shiftStartHour  Int       @default(0)        // Customizable shift start hour (0-23)
+  shiftDurationHrs Int      @default(8)        // Customizable shift duration
+
+  outgoingNurseId String                       // User ID
+  incomingNurseId String?                      // User ID (null until acknowledged)
+
+  criticalNotes String                         // What the next nurse MUST know
+  generalNotes  String?
+  acknowledgedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([admissionId, shiftDate])
+  @@index([outgoingNurseId])
+  @@index([shiftType, shiftDate])
+}
+
+// ============================================================================
+// IPD — OPERATION THEATER (OT)
+// ============================================================================
+
+model Surgery {
+  id          String @id @default(cuid())
+  admissionId String
+  admission   Admission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+
+  clinicId String
+  clinic   Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  name String                                  // "Appendectomy", "CABG", "Laparoscopic Cholecystectomy"
+
+  surgeonId String
+  surgeon   DoctorProfile @relation("LeadSurgeon", fields: [surgeonId], references: [id], onDelete: Cascade)
+
+  anesthetistId String?
+  anesthetist   DoctorProfile? @relation("Anesthetist", fields: [anesthetistId], references: [id])
+
+  otRoom         String                        // "OT-1", "OT-2"
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+  actualStart    DateTime?
+  actualEnd      DateTime?
+  status         SurgeryStatus @default(SCHEDULED)
+
+  // Safety checklists (JSON — flexible structure)
+  preOpChecklist  Json?   // { consent: true, npo: true, siteMarked: true, bloodGroupConfirmed: true, ... }
+  postOpChecklist Json?   // { vitalsSTable: true, drainageChecked: true, painManagement: true, ... }
+
+  estimatedCost Decimal? @db.Decimal(10, 2)
+  notes         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clinicId, scheduledStart])
+  @@index([surgeonId])
+  @@index([otRoom, scheduledStart])
+  @@index([status])
+  @@index([admissionId])
+}
+
+// ============================================================================
+// IPD — BILLING & RUNNING LEDGER
+// ============================================================================
+
+model IPDBill {
+  id          String    @id @default(cuid())
+  admissionId String    @unique
+  admission   Admission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+
+  clinicId String
+  clinic   Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  // Running totals — updated incrementally by API / cron
+  roomCharges     Decimal @default(0) @db.Decimal(10, 2)
+  doctorVisitFees Decimal @default(0) @db.Decimal(10, 2)
+  nursingCharges  Decimal @default(0) @db.Decimal(10, 2)
+  pharmacyCharges Decimal @default(0) @db.Decimal(10, 2)
+  surgeryCharges  Decimal @default(0) @db.Decimal(10, 2)
+  labCharges      Decimal @default(0) @db.Decimal(10, 2)
+  miscCharges     Decimal @default(0) @db.Decimal(10, 2)
+  totalAmount     Decimal @default(0) @db.Decimal(10, 2)
+  discountAmount  Decimal @default(0) @db.Decimal(10, 2)
+  taxAmount       Decimal @default(0) @db.Decimal(10, 2)
+  paidAmount      Decimal @default(0) @db.Decimal(10, 2)
+  balanceDue      Decimal @default(0) @db.Decimal(10, 2)
+
+  lastAccruedAt DateTime?
+
+  // Relations
+  billItems IPDBillItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clinicId])
+  @@index([createdAt])
+}
+
+model IPDBillItem {
+  id        String  @id @default(cuid())
+  ipdBillId String
+  ipdBill   IPDBill @relation(fields: [ipdBillId], references: [id], onDelete: Cascade)
+
+  category    String                          // "ROOM", "DOCTOR_VISIT", "PHARMACY", "LAB", "SURGERY", "NURSING", "MISC"
+  description String
+  quantity    Int     @default(1)
+  unitPrice   Decimal @db.Decimal(10, 2)
+  totalPrice  Decimal @db.Decimal(10, 2)
+  date        DateTime                        // Date the charge was incurred
+
+  referenceId   String?                       // Source entity ID (medicationOrderId, surgeryId, etc.)
+  referenceType String?                       // "MEDICATION_ORDER", "SURGERY", "LAB_ORDER", "ROOM_RENT", etc.
+
+  createdAt DateTime @default(now())
+
+  @@index([ipdBillId, date])
+  @@index([category])
+}
+
+// ============================================================================
+// IPD — TPA / INSURANCE
+// ============================================================================
+
+model TPARecord {
+  id          String    @id @default(cuid())
+  admissionId String    @unique
+  admission   Admission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+
+  insurerName    String                        // "Star Health", "ICICI Lombard", "Max Bupa"
+  policyNumber   String
+  tpaName        String?                       // "Medi Assist", "FHPL"
+  memberId       String?                       // Patient's insurance member ID
+
+  preAuthAmount  Decimal? @db.Decimal(10, 2)
+  approvedAmount Decimal? @db.Decimal(10, 2)
+  claimAmount    Decimal? @db.Decimal(10, 2)
+  settledAmount  Decimal? @db.Decimal(10, 2)
+
+  status         TPAStatus @default(PRE_AUTH_PENDING)
+
+  preAuthDocUrl  String?                       // Pre-authorization document URL
+  claimDocUrl    String?                       // Claim document URL
+
+  notes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([admissionId])
 }

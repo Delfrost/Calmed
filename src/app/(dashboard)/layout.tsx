@@ -40,6 +40,10 @@ export default function DashboardLayout({
     role = UserRole.ADMIN;
     dashboardTitle = 'Admin Portal';
     rolePrefix = '/admin';
+  } else if (pathname.startsWith('/nurse')) {
+    role = UserRole.NURSE;
+    dashboardTitle = 'Nursing Station';
+    rolePrefix = '/nurse';
   }
 
   // Resolve breadcrumbs dynamically
@@ -71,6 +75,7 @@ export default function DashboardLayout({
     [UserRole.RECEPTIONIST]: 'Sunita Devi (Front Desk)',
     [UserRole.PHARMACIST]: 'Amit Patel (R.Ph.)',
     [UserRole.ADMIN]: 'Rajesh Kumar (Clinic Director)',
+    [UserRole.NURSE]: 'Sister Mary (Nursing Station)',
   };
 
   const activeName = session?.user?.name || userNames[role];

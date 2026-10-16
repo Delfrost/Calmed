@@ -15,16 +15,19 @@ export async function GET(req: NextRequest) {
   const doctorId = searchParams.get('doctorId');
 
   try {
-    // Build the where clause
-    const where: Record<string, unknown> = {
+    let walkins: any[] = [];
+    let surgeries: any[] = [];
+
+    const startOfDay = dateStr ? new Date(dateStr) : new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = dateStr ? new Date(dateStr) : new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const where: Record<string, any> = {
       clinicId: session.user.clinicId,
     };
 
     if (dateStr) {
-      const startOfDay = new Date(dateStr);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(dateStr);
-      endOfDay.setHours(23, 59, 59, 999);
       where.date = { gte: startOfDay, lte: endOfDay };
     }
 
@@ -67,7 +70,55 @@ export async function GET(req: NextRequest) {
       orderBy: [{ date: 'asc' }, { timeSlot: 'asc' }],
     });
 
-    return NextResponse.json({ appointments });
+    // Query Checked-in QueueTokens for the day
+    walkins = await prisma.queueToken.findMany({
+      where: {
+        clinicId: session.user.clinicId,
+        createdAt: { gte: startOfDay, lte: endOfDay },
+        ...(doctorId ? { doctorId } : {}),
+      },
+      include: {
+        patient: true,
+        doctor: {
+          include: {
+            user: {
+              select: {
+                firstName: true,
+                lastName: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Query Surgeries for the day (OT Calendar Schedules)
+    surgeries = await prisma.surgery.findMany({
+      where: {
+        clinicId: session.user.clinicId,
+        scheduledStart: { gte: startOfDay, lte: endOfDay },
+        ...(doctorId ? { surgeonId: doctorId } : {}),
+      },
+      include: {
+        admission: {
+          include: {
+            patient: true,
+          },
+        },
+        surgeon: {
+          include: {
+            user: {
+              select: {
+                firstName: true,
+                lastName: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return NextResponse.json({ appointments, walkins, surgeries });
   } catch (error) {
     console.error('Failed to fetch appointments:', error);
     return NextResponse.json(

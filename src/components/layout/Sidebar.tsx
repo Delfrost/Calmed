@@ -22,6 +22,13 @@ import {
   TrendingUp,
   Stethoscope,
   LogOut,
+  BedDouble,
+  UserPlus,
+  Shield,
+  HeartPulse,
+  Activity,
+  Scissors,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { UserRole } from '@/types';
@@ -67,6 +74,52 @@ const navSections: NavSection[] = [
     ],
   },
   {
+    title: 'Inpatient Rounds',
+    items: [
+      {
+        label: 'My Ward Patients',
+        href: '/doctor/ipd',
+        icon: BedDouble,
+        roles: [UserRole.DOCTOR],
+      },
+      {
+        label: 'OT Schedule',
+        href: '/doctor/ipd/ot',
+        icon: Scissors,
+        roles: [UserRole.DOCTOR],
+      },
+    ],
+  },
+  {
+    title: 'Nursing Station',
+    items: [
+      {
+        label: 'My Patients',
+        href: '/nurse',
+        icon: HeartPulse,
+        roles: [UserRole.NURSE],
+      },
+      {
+        label: 'Vitals Flowsheet',
+        href: '/nurse/vitals',
+        icon: Activity,
+        roles: [UserRole.NURSE],
+      },
+      {
+        label: 'MAR',
+        href: '/nurse/mar',
+        icon: Pill,
+        roles: [UserRole.NURSE],
+      },
+      {
+        label: 'Shift Handover',
+        href: '/nurse/handover',
+        icon: ArrowRightLeft,
+        roles: [UserRole.NURSE],
+      },
+    ],
+  },
+  {
     title: 'Front Desk',
     items: [
       {
@@ -91,6 +144,35 @@ const navSections: NavSection[] = [
         label: 'Billing Desk',
         href: '/receptionist/billing',
         icon: Receipt,
+        roles: [UserRole.RECEPTIONIST],
+      },
+    ],
+  },
+  {
+    title: 'Inpatient (IPD)',
+    items: [
+      {
+        label: 'Bed Matrix',
+        href: '/receptionist/ipd/beds',
+        icon: BedDouble,
+        roles: [UserRole.RECEPTIONIST],
+      },
+      {
+        label: 'Admissions',
+        href: '/receptionist/ipd/admissions',
+        icon: UserPlus,
+        roles: [UserRole.RECEPTIONIST],
+      },
+      {
+        label: 'IPD Billing',
+        href: '/receptionist/ipd/billing',
+        icon: Receipt,
+        roles: [UserRole.RECEPTIONIST],
+      },
+      {
+        label: 'TPA Desk',
+        href: '/receptionist/ipd/tpa',
+        icon: Shield,
         roles: [UserRole.RECEPTIONIST],
       },
     ],
@@ -192,6 +274,7 @@ export default function Sidebar({
     [UserRole.DOCTOR]: 'bg-primary-50 text-primary-dark',
     [UserRole.RECEPTIONIST]: 'bg-secondary/10 text-secondary-dark',
     [UserRole.PHARMACIST]: 'bg-accent/10 text-accent-dark',
+    [UserRole.NURSE]: 'bg-emerald-100 text-emerald-700',
   };
 
   const roleLabels: Record<UserRole, string> = {
@@ -199,6 +282,7 @@ export default function Sidebar({
     [UserRole.DOCTOR]: 'Doctor',
     [UserRole.RECEPTIONIST]: 'Receptionist',
     [UserRole.PHARMACIST]: 'Pharmacist',
+    [UserRole.NURSE]: 'Nurse',
   };
 
   return (

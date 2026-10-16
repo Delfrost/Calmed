@@ -14,9 +14,11 @@ import {
   FileText,
   X,
   Plus,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import PatientHeader from '@/components/prescription/PatientHeader';
+import AIClinicalAssistant from '@/components/prescription/AIClinicalAssistant';
 import MedicineSearch from '@/components/prescription/MedicineSearch';
 import MedicineRow from '@/components/prescription/MedicineRow';
 import LabOrderSection from '@/components/prescription/LabOrderSection';
@@ -108,6 +110,7 @@ export default function PrescriptionPad({ patientId }: PrescriptionPadProps) {
   const [showPreview, setShowPreview] = useState(true);
   const [showMobilePreview, setShowMobilePreview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showAI, setShowAI] = useState(false);
 
   // Fetch patient details and check for existing draft prescriptions
   useEffect(() => {
@@ -414,23 +417,36 @@ export default function PrescriptionPad({ patientId }: PrescriptionPadProps) {
     <div className="min-h-screen bg-slate-50/50">
       <div className="mx-auto max-w-[1600px] p-4 lg:p-6 pb-24">
         {/* Page header */}
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-5 flex items-center gap-3"
-        >
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 shadow-md shadow-blue-200">
-            <Stethoscope className="h-5 w-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-slate-900">
-              Prescription Pad
-            </h1>
-            <p className="text-sm text-slate-500">
-              Create a new prescription for your patient
-            </p>
-          </div>
-        </motion.div>
+        <div className="mb-5 flex items-center justify-between">
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-3"
+          >
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 shadow-md shadow-blue-200">
+              <Stethoscope className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-slate-900">
+                Prescription Pad
+              </h1>
+              <p className="text-sm text-slate-500">
+                Create a new prescription for your patient
+              </p>
+            </div>
+          </motion.div>
+
+          <button
+            onClick={() => setShowAI(!showAI)}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-all",
+              showAI ? "bg-violet-100 text-violet-700" : "bg-gradient-to-r from-violet-600 to-purple-600 text-white hover:shadow-md hover:from-violet-700 hover:to-purple-700"
+            )}
+          >
+            <Sparkles className="w-4 h-4" />
+            <span className="hidden sm:inline">AI Assistant</span>
+          </button>
+        </div>
 
         {/* Patient header */}
         {isLoadingPatient ? (
@@ -772,6 +788,22 @@ export default function PrescriptionPad({ patientId }: PrescriptionPadProps) {
           </div>
         </div>
       </motion.div>
+
+      <AIClinicalAssistant
+        isOpen={showAI}
+        onClose={() => setShowAI(false)}
+        context={{
+          diagnosis,
+          vitals,
+          medicines,
+          allergies: patient?.allergies || [],
+          chronicConditions: patient?.chronicConditions || [],
+          patientAge: patient?.age || 0,
+          patientGender: patient?.gender || '',
+        }}
+        onApplyNotes={(aiNotes) => setNotes((prev) => prev ? `${prev}\n\n${aiNotes}` : aiNotes)}
+        onApplyDiagnosis={setDiagnosis}
+      />
     </div>
   );
 }

@@ -21,7 +21,8 @@ import {
   AlertTriangle,
   Building,
   Activity,
-  Trash2
+  Trash2,
+  HeartPulse
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Breadcrumb } from '@/types';
@@ -131,6 +132,10 @@ export default function Header({ title, breadcrumbs = [] }: HeaderProps) {
     activeRole = 'ADMIN';
     activeStaffName = 'Rajesh Kumar';
     activeStaffSub = 'Clinic Director';
+  } else if (pathname.startsWith('/nurse')) {
+    activeRole = 'NURSE';
+    activeStaffName = 'Sister Mary';
+    activeStaffSub = 'Head Ward Nurse';
   }
 
   if (session?.user) {
@@ -144,6 +149,8 @@ export default function Header({ title, breadcrumbs = [] }: HeaderProps) {
       activeStaffSub = 'Head Pharmacist';
     } else if (activeRole === 'ADMIN') {
       activeStaffSub = 'Clinic Director';
+    } else if (activeRole === 'NURSE') {
+      activeStaffSub = 'Head Ward Nurse';
     }
   }
 
@@ -676,6 +683,20 @@ export default function Header({ title, breadcrumbs = [] }: HeaderProps) {
                     >
                       <Shield className="w-3.5 h-3.5 shrink-0" />
                       Admin
+                    </Link>
+
+                    <Link
+                      href="/nurse"
+                      onClick={() => setProfileOpen(false)}
+                      className={cn(
+                        'flex items-center gap-1.5 p-2 rounded-xl border text-[10px] font-bold text-left transition-all col-span-2 sm:col-span-1',
+                        activeRole === 'NURSE'
+                          ? 'border-primary/20 bg-primary/5 text-primary'
+                          : 'border-slate-100 bg-slate-50 hover:bg-slate-100 text-slate-600'
+                      )}
+                    >
+                      <HeartPulse className="w-3.5 h-3.5 shrink-0 text-rose-500" />
+                      Nurse
                     </Link>
                   </div>
                 </div>

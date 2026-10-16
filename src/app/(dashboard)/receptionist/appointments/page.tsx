@@ -24,17 +24,18 @@ interface Appointment {
   doctorId: string;
   doctorName: string;
   timeSlot: string; // "09:00", "09:30", etc.
-  type: 'CONSULTATION' | 'FOLLOW_UP' | 'EMERGENCY';
+  type: 'CONSULTATION' | 'FOLLOW_UP' | 'EMERGENCY' | 'WALK_IN' | 'SURGERY';
   status: 'SCHEDULED' | 'CHECKED_IN' | 'COMPLETED' | 'CANCELLED';
   notes?: string;
+  itemType: 'APPOINTMENT' | 'WALK_IN' | 'SURGERY';
+  otRoom?: string;
 }
 
-const TIME_SLOTS = [
-  '09:00', '09:15', '09:30', '09:45',
-  '10:00', '10:15', '10:30', '10:45',
-  '11:00', '11:15', '11:30', '11:45',
-  '12:00', '12:15', '12:30', '12:45',
-];
+const TIME_SLOTS = Array.from({ length: 36 }, (_, i) => {
+  const hour = Math.floor(i / 4) + 9;
+  const minute = (i % 4) * 15;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+});
 
 function getLocalDateString(d: Date = new Date()) {
   const year = d.getFullYear();
@@ -90,18 +91,85 @@ export default function AppointmentsScheduler() {
       const res = await fetch(`/api/appointments?date=${selectedDate}&doctorId=${selectedDoctorId}`);
       if (res.ok) {
         const data = await res.json();
-        const mapped = data.appointments.map((apt: any) => ({
+
+        // 1. Map Appointments
+        const mappedApts = (data.appointments || []).map((apt: any) => ({
           id: apt.id,
           patientName: `${apt.patient.firstName} ${apt.patient.lastName}`,
-          phone: apt.patient.phone,
+          phone: apt.patient.phone || '',
           doctorId: apt.doctorId,
           doctorName: `Dr. ${apt.doctor.user.firstName} ${apt.doctor.user.lastName}`,
           timeSlot: apt.timeSlot,
           type: apt.type,
           status: apt.status,
           notes: apt.notes,
+          itemType: 'APPOINTMENT' as const,
         }));
-        setAppointments(mapped);
+
+        // Helper to get nearest slot
+        const getNearestSlot = (dateStr: string | Date): string => {
+          const date = new Date(dateStr);
+          const hrs = date.getHours();
+          const mins = date.getMinutes();
+          const roundedMins = Math.round(mins / 15) * 15;
+          let finalHrs = hrs;
+          let finalMins = roundedMins;
+          if (finalMins === 60) {
+            finalHrs += 1;
+            finalMins = 0;
+          }
+          return `${String(finalHrs).padStart(2, '0')}:${String(finalMins).padStart(2, '0')}`;
+        };
+
+        // 2. Map Walk-ins
+        const mappedWalkins = (data.walkins || []).map((wi: any) => {
+          const slot = getNearestSlot(wi.createdAt);
+          let statusMapped: any = 'SCHEDULED';
+          if (wi.status === 'SERVING') statusMapped = 'CHECKED_IN';
+          else if (wi.status === 'COMPLETED') statusMapped = 'COMPLETED';
+          else if (wi.status === 'SKIPPED') statusMapped = 'CANCELLED';
+
+          return {
+            id: wi.id,
+            patientName: `${wi.patient.firstName} ${wi.patient.lastName}`,
+            phone: wi.patient.phone || '',
+            doctorId: wi.doctorId || '',
+            doctorName: wi.doctor ? `Dr. ${wi.doctor.user.firstName} ${wi.doctor.user.lastName}` : '',
+            timeSlot: slot,
+            type: 'WALK_IN' as const,
+            status: statusMapped,
+            notes: `Walk-in Token #${wi.tokenNumber}`,
+            itemType: 'WALK_IN' as const,
+          };
+        });
+
+        // 3. Map Surgeries
+        const mappedSurgeries = (data.surgeries || []).map((surg: any) => {
+          const slot = getNearestSlot(surg.scheduledStart);
+          let statusMapped: any = 'SCHEDULED';
+          if (surg.status === 'IN_PROGRESS' || surg.status === 'POST_OP' || surg.status === 'PRE_OP') statusMapped = 'CHECKED_IN';
+          else if (surg.status === 'COMPLETED') statusMapped = 'COMPLETED';
+          else if (surg.status === 'CANCELLED') statusMapped = 'CANCELLED';
+
+          const patient = surg.admission.patient;
+
+          return {
+            id: surg.id,
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            phone: patient.phone || '',
+            doctorId: surg.surgeonId,
+            doctorName: `Dr. ${surg.surgeon.user.firstName} ${surg.surgeon.user.lastName}`,
+            timeSlot: slot,
+            type: 'SURGERY' as const,
+            status: statusMapped,
+            notes: `OT Surgery: ${surg.name} · Room: ${surg.otRoom}`,
+            itemType: 'SURGERY' as const,
+            otRoom: surg.otRoom,
+          };
+        });
+
+        // Combine all
+        setAppointments([...mappedApts, ...mappedWalkins, ...mappedSurgeries]);
       }
     } catch (err) {
       console.error('Failed to fetch appointments:', err);
@@ -447,10 +515,14 @@ export default function AppointmentsScheduler() {
                           layout
                           className={cn(
                             'rounded-xl border p-3 min-w-[240px] max-w-sm flex items-start justify-between gap-3 shadow-sm transition-all',
-                            apt.status === 'COMPLETED' && 'bg-emerald-50/50 border-emerald-100 text-emerald-800',
-                            apt.status === 'CHECKED_IN' && 'bg-blue-50/50 border-blue-100 text-blue-800',
-                            apt.status === 'SCHEDULED' && 'bg-white border-slate-200 text-slate-700',
-                            apt.status === 'CANCELLED' && 'bg-slate-50 border-slate-100 text-slate-400'
+                            apt.status === 'COMPLETED' && 'bg-emerald-50/30 border-emerald-100 text-emerald-800',
+                            apt.status === 'CHECKED_IN' && 'bg-blue-50/30 border-blue-100 text-blue-800',
+                            apt.status === 'CANCELLED' && 'bg-slate-50 border-slate-100 text-slate-400',
+                            apt.status === 'SCHEDULED' && (
+                              apt.itemType === 'WALK_IN' ? 'bg-teal-50/30 border-teal-100 text-teal-800' :
+                              apt.itemType === 'SURGERY' ? 'bg-rose-50/30 border-rose-100 text-rose-800' :
+                              'bg-white border-slate-200 text-slate-700'
+                            )
                           )}
                         >
                           <div>
@@ -458,13 +530,15 @@ export default function AppointmentsScheduler() {
                               <span className="text-xs font-bold">{apt.patientName}</span>
                               <span
                                 className={cn(
-                                  'text-[9px] font-extrabold px-1.5 py-0.5 rounded-md uppercase tracking-wider',
-                                  apt.type === 'EMERGENCY' && 'bg-red-100 text-red-700',
-                                  apt.type === 'FOLLOW_UP' && 'bg-amber-100 text-amber-700',
-                                  apt.type === 'CONSULTATION' && 'bg-slate-100 text-slate-600'
+                                  'text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider',
+                                  apt.type === 'EMERGENCY' && 'bg-red-100 text-red-700 border border-red-200',
+                                  apt.type === 'FOLLOW_UP' && 'bg-amber-100 text-amber-700 border border-amber-200',
+                                  apt.type === 'CONSULTATION' && 'bg-slate-100 text-slate-600 border border-slate-200',
+                                  apt.type === 'WALK_IN' && 'bg-teal-100 text-teal-700 border border-teal-200',
+                                  apt.type === 'SURGERY' && 'bg-rose-100 text-rose-700 border border-rose-200'
                                 )}
                               >
-                                {apt.type}
+                                {apt.type === 'WALK_IN' ? 'WALK IN' : apt.type === 'SURGERY' ? 'SURGERY' : apt.type}
                               </span>
                             </div>
                             <p className="text-[10px] text-slate-400 mt-1">{apt.phone}</p>
@@ -473,16 +547,22 @@ export default function AppointmentsScheduler() {
 
                           {/* Status update options */}
                           <div className="flex flex-col items-end gap-1.5">
-                            <select
-                              value={apt.status}
-                              onChange={(e) => handleUpdateStatus(apt.id, e.target.value as Appointment['status'])}
-                              className="text-[9px] font-bold uppercase tracking-wider rounded border border-transparent bg-white/80 p-1 shadow-sm shrink-0 cursor-pointer"
-                            >
-                              <option value="SCHEDULED">Scheduled</option>
-                              <option value="CHECKED_IN">Check In</option>
-                              <option value="COMPLETED">Complete</option>
-                              <option value="CANCELLED">Cancel</option>
-                            </select>
+                            {apt.itemType === 'APPOINTMENT' ? (
+                              <select
+                                value={apt.status}
+                                onChange={(e) => handleUpdateStatus(apt.id, e.target.value as Appointment['status'])}
+                                className="text-[9px] font-bold uppercase tracking-wider rounded border border-transparent bg-white/80 p-1 shadow-sm shrink-0 cursor-pointer"
+                              >
+                                <option value="SCHEDULED">Scheduled</option>
+                                <option value="CHECKED_IN">Check In</option>
+                                <option value="COMPLETED">Complete</option>
+                                <option value="CANCELLED">Cancel</option>
+                              </select>
+                            ) : (
+                              <span className="text-[8px] font-black uppercase tracking-wider bg-white/80 border border-slate-100 px-2 py-1 rounded shadow-sm text-slate-500">
+                                {apt.status}
+                              </span>
+                            )}
                           </div>
                         </motion.div>
                       ))

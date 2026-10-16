@@ -14,6 +14,8 @@ import {
   Calendar,
   Stethoscope,
   X,
+  BedDouble,
+  Video,
 } from 'lucide-react';
 
 // ============================================================================
@@ -81,6 +83,51 @@ export default function DoctorDashboard() {
     timestamp?: string;
   } | null>(null);
   const { data: session } = useSession();
+
+  // Admission request modal states
+  const [admittingPatient, setAdmittingPatient] = useState<{ id: string; name: string } | null>(null);
+  const [wardType, setWardType] = useState('GENERAL');
+  const [diagnosis, setDiagnosis] = useState('');
+  const [complaints, setComplaints] = useState('');
+  const [notes, setNotes] = useState('');
+  const [submittingRequest, setSubmittingRequest] = useState(false);
+
+  const handleAdmitSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!admittingPatient) return;
+
+    try {
+      setSubmittingRequest(true);
+      const res = await fetch('/api/ipd/admissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patientId: admittingPatient.id,
+          admittingDoctorId: session?.user?.doctorProfileId || '',
+          status: 'REQUESTED',
+          source: 'OPD',
+          diagnosis,
+          chiefComplaints: complaints,
+          notes,
+        }),
+      });
+
+      if (res.ok) {
+        setAdmittingPatient(null);
+        setDiagnosis('');
+        setComplaints('');
+        setNotes('');
+        alert('Admission request sent to reception front desk!');
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to submit admission request.');
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSubmittingRequest(false);
+    }
+  };
 
   const fetchQueue = async () => {
     try {
@@ -303,14 +350,30 @@ export default function DoctorDashboard() {
 
                   {/* Actions */}
                   {item.status !== 'COMPLETED' && (
-                    <Link
-                      href={`/doctor/prescription/${item.patientId}`}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors opacity-0 group-hover:opacity-100 duration-200"
-                    >
-                      <FileText className="h-3.5 w-3.5" />
-                      Prescribe
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </Link>
+                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all duration-200">
+                      <button
+                        onClick={() => setAdmittingPatient({ id: item.patientId, name: item.patientName })}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50/20 text-slate-700 text-xs font-semibold cursor-pointer"
+                      >
+                        <BedDouble className="h-3.5 w-3.5 text-blue-500" />
+                        Admit
+                      </button>
+                      <Link
+                        href={`/doctor/telemedicine/${item.patientId}`}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold"
+                      >
+                        <Video className="h-3.5 w-3.5 text-indigo-500" />
+                        Telemed
+                      </Link>
+                      <Link
+                        href={`/doctor/prescription/${item.patientId}`}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700"
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                        Prescribe
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </Link>
+                    </div>
                   )}
                 </div>
               </motion.div>
@@ -362,6 +425,113 @@ export default function DoctorDashboard() {
                 </div>
               )}
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Request Admission Modal */}
+      <AnimatePresence>
+        {admittingPatient && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4"
+            onClick={() => setAdmittingPatient(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white max-w-sm w-full rounded-2xl p-6 shadow-2xl relative border border-slate-100 space-y-5"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h4 className="font-extrabold text-sm text-slate-800 font-display">
+                  Request Inpatient Admission
+                </h4>
+                <button
+                  onClick={() => setAdmittingPatient(null)}
+                  className="p-1 rounded-md text-slate-400 hover:text-slate-600"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleAdmitSubmit} className="space-y-4">
+                <p className="text-xs text-slate-500">
+                  Requesting bed admission for patient: <strong>{admittingPatient.name}</strong>.
+                </p>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                    Requested Ward Tier
+                  </label>
+                  <select
+                    value={wardType}
+                    onChange={(e) => setWardType(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs bg-white focus:border-blue-400"
+                  >
+                    <option value="GENERAL">General Ward</option>
+                    <option value="SEMI_PRIVATE">Semi-Private</option>
+                    <option value="PRIVATE">Private Room</option>
+                    <option value="ICU">ICU (Intensive Care)</option>
+                    <option value="NICU">NICU (Neonatal ICU)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                    Diagnosis / Reason for Admission
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={diagnosis}
+                    onChange={(e) => setDiagnosis(e.target.value)}
+                    placeholder="e.g. Acute Appendicitis / High fever"
+                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs outline-none focus:border-blue-400"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                      Chief Complaints
+                    </label>
+                    <input
+                      type="text"
+                      value={complaints}
+                      onChange={(e) => setComplaints(e.target.value)}
+                      placeholder="e.g. Abdominal pain"
+                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs outline-none focus:border-blue-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                      Clinical Notes
+                    </label>
+                    <input
+                      type="text"
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      placeholder="e.g. Needs immediate scan"
+                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs outline-none focus:border-blue-400"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={submittingRequest}
+                    className="w-full h-10 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:bg-slate-100 disabled:text-slate-400 text-white font-semibold text-xs transition-all active:scale-[0.98]"
+                  >
+                    {submittingRequest ? 'Submitting Request...' : 'Send Admission Request'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
